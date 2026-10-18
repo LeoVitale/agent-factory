@@ -1,0 +1,33 @@
+{
+  "team_key": "HES",
+  "states": {
+    "ready": "Ready for agent",
+    "progress": "In Progress",
+    "review": "In review"
+  },
+  "label": "factory",
+  "needs_human_label": "factory:needs-human",
+  "canvas_public_url": "http://localhost:8200/canvas",
+  "agent_profile_id": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
+  "github_repo": "LeoVitale/project-hestia",
+  "repo_path": "/projects/project-hestia",
+  "worktrees_path": "/projects/worktrees",
+  "base_branch": "main",
+  "max_fix_rounds": 3,
+  "max_base_syncs": 3,
+  "max_active": 3,
+  "poll_seconds": 120,
+  "no_checks_timeout_seconds": 900,
+  "schema_paths": ["supabase/"],
+  "mentions": {
+    "channels": ["C0CA32LN7M0"],
+    "workspace": "/projects/slack-mentions",
+    "debounce_seconds": 15,
+    "poll_seconds": 10
+  },
+  "slack": {
+    "channel_prefix": "hestia-",
+    "default_channel": "hestia-factory",
+    "project_channels": {}
+  }
+}

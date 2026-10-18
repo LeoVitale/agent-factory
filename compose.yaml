@@ -1,0 +1,60 @@
+name: agent-sandbox
+
+x-identity: &identity # Commits made in the sandbox are authored as you.
+  GIT_AUTHOR_NAME: Leonardo Vitale
+  GIT_AUTHOR_EMAIL: leonardo.vitale@outlook.com
+  GIT_COMMITTER_NAME: Leonardo Vitale
+  GIT_COMMITTER_EMAIL: leonardo.vitale@outlook.com
+
+services:
+  canvas:
+    build: .
+    image: agent-sandbox/agent-canvas-cursor:1.27.1
+    container_name: agent-sandbox
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8200:8000"
+    env_file: .env
+    environment:
+      <<: *identity
+      AGENT_CANVAS_ALLOW_LAN_SESSION_KEY: "true"
+      # Agents run without a TTY, so corepack must fetch the pinned pnpm without asking.
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      # Let the Cursor CLI read its own skills from the mounted folders instead
+      # of OpenHands injecting its managed catalog on top.
+      OH_ACP_SKILL_SOURCING: native
+    volumes:
+      # Container home: keeps the Cursor login and CLI state across restarts.
+      - home:/home/openhands
+      - ./openhands-state:/home/openhands/.openhands
+      - ./projects:/projects
+      - ./cursor-mcp.json:/opt/sandbox/cursor-mcp.json:ro
+      # Global skills, at their host paths so their symlinks resolve.
+      - /Users/vitale/.agents/skills:/Users/vitale/.agents/skills:ro
+      - /Users/vitale/.claude/skills:/Users/vitale/.claude/skills:ro
+      - /Users/vitale/.cursor/skills:/Users/vitale/.cursor/skills:ro
+      - /Users/vitale/.codex/skills:/Users/vitale/.codex/skills:ro
+      - /Users/vitale/projects/vita/CodeFairy/skills:/Users/vitale/projects/vita/CodeFairy/skills:ro
+      - /Users/vitale/projects/vita/guided-codebase-builder/skills/guided-codebase-builder:/Users/vitale/projects/vita/guided-codebase-builder/skills/guided-codebase-builder:ro
+
+  # Agentic factory orchestrator: polls Linear and GitHub, runs one Canvas
+  # conversation per station, and talks to you over Slack Socket Mode.
+  factory:
+    image: agent-sandbox/agent-canvas-cursor:1.27.1
+    container_name: agent-sandbox-factory
+    restart: unless-stopped
+    depends_on:
+      - canvas
+    env_file: .env
+    environment:
+      <<: *identity
+      CANVAS_URL: http://canvas:8000
+    command: ["python3", "/opt/factory/factory.py"]
+    volumes:
+      - ./factory:/opt/factory:ro
+      - ./factory-state:/state
+      - ./projects:/projects
+      - ./openhands-state:/canvas-state:ro
+
+volumes:
+  home:
