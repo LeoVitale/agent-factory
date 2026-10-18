@@ -392,8 +392,9 @@ def start_station(rec, station, prompt):
     rec["stage"] = station
     if not mutate(f"start {station} conversation for {rec['identifier']}"):
         return
+    profile = CONFIG.get("station_profiles", {}).get(station, CONFIG["agent_profile_id"])
     out = canvas("POST", "/api/conversations", {
-        "agent_profile_id": CONFIG["agent_profile_id"],
+        "agent_profile_id": profile,
         "workspace": {"kind": "LocalWorkspace", "working_dir": rec["worktree"]},
         "worktree": False,
         "autotitle": False,
@@ -403,7 +404,7 @@ def start_station(rec, station, prompt):
     rec["conversation_id"] = out["id"]
     rec["events_mark"] = 0
     rec["station_started_at"] = now()
-    rec.setdefault("conversations", []).append({"station": station, "id": out["id"], "at": now()})
+    rec.setdefault("conversations", []).append({"station": station, "id": out["id"], "at": now(), "profile": profile})
     notify(rec, f"{station.capitalize()} started. <{CONFIG['canvas_public_url']}/conversations/{out['id']}"
                 f"|Open the conversation>")
 
@@ -619,6 +620,11 @@ def start_demo(rec, head, back):
     if mutate(f"create {demo_dir}"):
         demo_dir.mkdir(parents=True, exist_ok=True)
     rec.update(demo_for=head, demo_back=back, demo_dir=str(demo_dir))
+    kit = HERE / "demo-kit.mjs"
+    if kit.is_file() and mutate("install the demo kit"):
+        tools = Path(DEMO.get("tools_path", "/projects/.demo-tools"))
+        tools.mkdir(parents=True, exist_ok=True)
+        (tools / kit.name).write_text(kit.read_text())
     rec.pop("demo_wait_noticed", None)
     issue = issue_detail(rec["issue_id"])
     start_station(rec, "demo", render(
@@ -1289,6 +1295,29 @@ def tick(state):
         save_state(state)
 
 
+FINISHED = ("finished", "error", "stuck", "waiting_for_confirmation")
+
+
+def stations_active(state):
+    return any(r["stage"] in STATIONS and r.get("conversation_id") for r in state["issues"].values())
+
+
+def quick_tick(state):
+    """Between full ticks: advance only the stations whose conversation just ended. Touches the Canvas, not Linear."""
+    with LOCK:
+        _STATE["issues"] = state["issues"]
+        for rec in [r for r in state["issues"].values() if r["stage"] in STATIONS and r.get("conversation_id")]:
+            try:
+                if canvas("GET", f"/api/conversations/{rec['conversation_id']}").get("execution_status") in FINISHED:
+                    advance(rec)
+                    save_state(state)
+            except Stop as stop:
+                stop_for_human(rec, str(stop))
+                save_state(state)
+            except Exception:
+                log.error("%s quick check failed:\n%s", rec["identifier"], traceback.format_exc())
+
+
 def keep_in_review(rec):
     """Linear's GitHub automation can move the issue back when the pull request leaves draft; put it back."""
     rec["review_checks"] = rec.get("review_checks", 0) + 1
@@ -1314,10 +1343,17 @@ def main():
         if woken or time.time() - last_tick >= CONFIG["poll_seconds"]:
             tick(state)
             last_tick = time.time()
+        elif stations_active(state):
+            quick_tick(state)
         handle_mentions(state)
-        # A running mention conversation is checked often so its answer reaches Slack quickly.
-        WAKE.wait(CONFIG["mentions"]["poll_seconds"] if mentions_active(state)
-                  else max(1.0, CONFIG["poll_seconds"] - (time.time() - last_tick)))
+        # Running conversations are checked often, so the next station starts soon after one ends
+        # and a mention's answer reaches Slack quickly. Linear is only read on the full tick.
+        waits = [max(1.0, CONFIG["poll_seconds"] - (time.time() - last_tick))]
+        if mentions_active(state):
+            waits.append(CONFIG["mentions"]["poll_seconds"])
+        if stations_active(state):
+            waits.append(CONFIG.get("active_poll_seconds", 15))
+        WAKE.wait(min(waits))
 
 
 if __name__ == "__main__":

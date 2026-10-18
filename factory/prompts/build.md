@@ -13,8 +13,7 @@ Use the `tlc-implement` skill with the profile in `AGENTS.md` (`profile: ui`, `h
 - Do not dispatch the Verifier. The factory holds the whole feature and runs the Verifier in its own conversation after you.
 - `pnpm run test:rls` cannot run in this sandbox. If the change touches schema or RLS, say so in the checklist and do not treat the proof as passed.
 - When the build is complete, push `{{branch}}` and open one draft pull request into `{{base}}` with `gh pr create --draft --base {{base}}`. Its title names {{identifier}}, and its body links {{issue_url}} and the tasks file and checklist.
-- Use the `iterate` skill only to get CI green on the head commit. Do not mark the pull request ready.
-- {{ci_note}}
+- Do not wait for CI. Once the draft pull request is open, finish: the factory waits for CI on the head commit and opens a Fix round if it fails. Do not mark the pull request ready.
 
 If your context runs out before the last slice, write the handoff into the checklist as `tlc-implement` describes, commit it, and finish with status `handoff`.
 

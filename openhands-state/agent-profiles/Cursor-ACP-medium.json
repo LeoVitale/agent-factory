@@ -1,0 +1,16 @@
+{
+  "schema_version": 3,
+  "agent_kind": "acp",
+  "id": "8c87a39a-3a52-4b7f-bbea-53d5fc95c96c",
+  "name": "Cursor-ACP-medium",
+  "revision": 1,
+  "mcp_server_refs": null,
+  "secret_refs": null,
+  "acp_server": "custom",
+  "acp_model": "grok-4.7[context=256k,reasoning_effort=medium,fast=true]",
+  "acp_session_mode": null,
+  "acp_prompt_timeout": 1800.0,
+  "acp_startup_timeout": 90.0,
+  "acp_command": "python3 /home/openhands/.openhands/bin/cursor-acp-params.py --model grok-4.7 --set context=256k --set reasoning_effort=medium --set fast=true -- /Users/vitale/.local/bin/agent acp",
+  "acp_args": null
+}

@@ -29,6 +29,7 @@ subprocess.run("git add . && git commit -qm init && git push -q origin HEAD:main
 cfg = json.loads((FACTORY / "config.json").read_text())
 cfg["repo_path"] = str(clone)
 cfg["demo"]["evidence_path"] = str(ROOT / "evidence")
+cfg["demo"]["tools_path"] = str(ROOT / "tools")
 cfg_path = ROOT / "config.json"
 cfg_path.write_text(json.dumps(cfg))
 os.environ.update(FACTORY_CONFIG=str(cfg_path), FACTORY_STATE=str(ROOT / "state" / "state.json"), LINEAR_API_KEY="x")
