@@ -1,23 +1,23 @@
 # Histórico da construção da fábrica agêntica
 
-Este é o registro de como a fábrica foi construída, desde a primeira pergunta até três issues do Visual refresh chegarem a In review com PR aberto. Os horários estão em UTC. O horário local é UTC−3. Os marcados com "≈" foram reconstruídos pela ordem da conversa, e os demais vêm de logs, do GitHub ou do Linear. O que a fábrica é e como funciona está em [factory.md](factory.md).
+Este é o registro de como a fábrica foi construída, desde a primeira pergunta até três issues do Visual refresh chegarem a In review com PR aberto. Os horários estão em UTC. O horário local é UTC−3. Eles vêm do registro de captura da sessão no ai-memory, dos logs da fábrica, do GitHub e do Linear. O que a fábrica é e como funciona está em [factory.md](factory.md).
 
 ## Resumo
 
 | Marco                                                          | Quando (UTC)  |
 | -------------------------------------------------------------- | ------------- |
-| Primeira pergunta: "o que mais eu preciso fazer?"              | 17/10 ≈ 23:30 |
+| Primeira pergunta: "o que mais eu preciso fazer?"              | 18/10 00:18   |
 | Sandbox Docker com Cursor, skills e Linear no ar               | 18/10 00:34   |
-| Primeira conversa Cursor-ACP aberta pela API do sandbox        | 18/10 ≈ 03:30 |
+| Primeira conversa Cursor-ACP aberta pela API do sandbox        | 18/10 ≈ 04:05 |
 | Orquestrador ligado, conectado ao Slack                        | 18/10 04:25   |
 | Novas regras do AGENTS.md na `main` (PR #68)                   | 18/10 04:44   |
 | Primeira issue pega pela fábrica (HES-104)                     | 18/10 05:45   |
 | Fábrica com 3 vagas em paralelo                                | 18/10 06:03   |
 | Primeiro APPROVE da the-judge e primeiro PR em In review (#72) | 18/10 07:20   |
 | Três PRs abertos em In review (#72, #73, #74)                  | 18/10 08:15   |
-| Documentação e auditoria da fábrica (`factory.md`)             | 18/10 14:05   |
+| Documentação e auditoria da fábrica (`factory.md`)             | 18/10 14:06   |
 
-## 1. Ponto de partida (17/10, noite)
+## 1. Ponto de partida (18/10, 00:18)
 
 - **O que existia:**
   - O OpenHands **Agent Canvas 1.27.1** instalado pelo npm no Mac, **sem sandbox**, na porta 8100.
@@ -31,7 +31,7 @@ Este é o registro de como a fábrica foi construída, desde a primeira pergunta
   - custo.
 - **Sem sandbox, o agente teria acesso a tudo** que o seu usuário acessa: CLIs logadas (Supabase, Vercel, `gh`), `~/.ssh`, outros repositórios. A sugestão foi um usuário macOS separado, que você recusou: **"eu preciso então de um sandbox com o Linear, Cursor, todas minhas agents skills globais"**.
 
-## 2. Sandbox Docker (18/10, 00:00–01:30)
+## 2. Sandbox Docker (00:22–01:50)
 
 - **Investigação:** como a instalação estava montada (`~/.openhands`, perfis, configurações sem segredos, skills públicas `agent-canvas-environment` e `docker`) e quais as opções de sandbox do README.
 - **Decisão:** usar a opção "Docker sandbox" (o Canvas inteiro num container) com uma imagem própria.
@@ -45,7 +45,7 @@ Este é o registro de como a fábrica foi construída, desde a primeira pergunta
 - **Teste:** o Cursor dentro do sandbox listou todas as skills (globais, do repo e plugins da conta) e leu o Linear. Ele enxergou o time **Hestia (HES)**, e não o "Leovitale / Project Hestia" que o `AGENTS.md` citava.
 - **Verificação depois de reiniciar:** o login e o Linear continuaram valendo.
 
-## 3. Desenho do fluxo (≈ 01:30–03:00)
+## 3. Desenho do fluxo (02:43–04:03)
 
 - **Explicação do fluxo:** um orquestrador de polling no lugar de webhooks (tudo é local), uma conversa por etapa e a the-judge num contexto separado. Duas limitações do GitHub apareceram: o autor do PR não consegue aprovar o próprio PR, e o `test:rls` não roda no sandbox.
 - **Diagrama:** você mandou o diagrama "A fábrica de software agêntica v2", e ele foi lido como uma **light factory**, com pessoas em Research e Review. Pesquisa sobre "agentic factory": BCG Platinion, Factory.ai, a lista awesome-software-factories, Symphony, e a diferença entre dark e light factory.
@@ -57,7 +57,7 @@ Este é o registro de como a fábrica foi construída, desde a primeira pergunta
 - **Regras:** proposta da nova seção "Agent cycle" do `AGENTS.md` num worktree `chore/agentic-factory-cycle`, sem mexer no `feat/visual-refresh`. A label `factory` passou a ser o "sim" para push e PR em rascunho.
 - **Slack:** canal por projeto, thread por issue, **Slack primeiro** quando a fábrica precisar de você, resposta pelo Slack ou pelo Linear, e registro em inglês no Linear. Você escolheu o **Socket Mode** e aceitou as duas formas de resposta.
 
-## 4. Teste da API e orquestrador (≈ 03:00–04:25)
+## 4. Teste da API e orquestrador (04:03–04:25)
 
 - **Teste da API:** uma conversa `Cursor-ACP` aberta pela API do sandbox rodou num worktree próprio, enxergou `tlc-plan`, `tlc-implement` e `the-judge`, e devolveu a resposta final. Esse teste validou o plano inteiro.
 - **Linear:** os status já existiam (Ready for agent, In Progress, In review). Foram criadas as labels **`factory`** e **`factory:needs-human`** no time HES.
@@ -78,7 +78,7 @@ Este é o registro de como a fábrica foi construída, desde a primeira pergunta
   - A the-judge no #69 deu APPROVE, com 1 nit e 1 achado anterior ao PR. Os dois foram corrigidos no mesmo PR.
 - **Canal do Slack:** a fábrica passou a **convidar você** para os canais que cria.
 
-## 6. Menções no Slack (≈ 05:00–05:13)
+## 6. Menções no Slack (05:00–05:13)
 
 - **A automação "Slack Channel Monitor"**, que você tinha criado às 02:11 no Canvas, respondia a menções ao `@openhands` no #visual-refresh por polling de 1 minuto.
 - **Você pediu para a fábrica fazer o mesmo pelo Socket Mode.** Ela reage com 👀, abre uma conversa Cursor-ACP com as mesmas regras, posta o link, depois a resposta final, e encaminha as menções seguintes na mesma thread. O monitor foi **pausado**.
@@ -123,7 +123,7 @@ Este é o registro de como a fábrica foi construída, desde a primeira pergunta
 - **HES-105:** COMMENT (contraste de 1.04:1 e 2.57:1), Fix 2 e **APPROVE às 08:15**.
 - **Situação ao fim:** PRs **#72, #73 e #74 abertos em In review**. HES-106 espera a HES-105 chegar a Done, e HES-107 espera a HES-106.
 
-## 9. Documentação e auditoria (≈ 13:00–14:05)
+## 9. Documentação e auditoria (13:53–15:06)
 
 - **Quatro subagentes, todos só de leitura:**
   - revisão do código: 24 achados confirmados;
