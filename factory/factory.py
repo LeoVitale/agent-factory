@@ -2,13 +2,16 @@
 """Hestia agentic factory orchestrator.
 
 Polls Linear and GitHub, runs one OpenHands (Cursor ACP) conversation per
-station - plan, build, verify, judge, fix - and checks each station's
+station - plan, build, verify, judge, fix, demo - and checks each station's
 artifacts before moving on. Talks to the person through one Slack thread per
 issue (Socket Mode) and through Linear comments. No LLM runs here.
 
   python3 factory.py            run the daemon
   python3 factory.py --once     run one tick and exit
   FACTORY_DRY_RUN=1             read everything, write nothing
+
+Record the demo of a pull request already in review:
+  touch <state dir>/requests/demo-HES-104
 """
 import json
 import logging
@@ -16,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -39,9 +43,18 @@ DRY_RUN = os.environ.get("FACTORY_DRY_RUN") == "1"
 REPO = CONFIG["repo_path"]
 WORKTREES = Path(CONFIG["worktrees_path"])
 MAX_ROUNDS = CONFIG["max_fix_rounds"]
-STATIONS = ("plan", "build", "verify", "judge", "fix")
+STATIONS = ("plan", "build", "verify", "judge", "fix", "demo")
 DONE_STAGES = ("review", "dropped")
 FACTORY_MARK = "[factory]"
+
+DEMO = CONFIG.get("demo", {})
+EVIDENCE = Path(DEMO.get("evidence_path", "/projects/factory-evidence"))
+REQUESTS = STATE_PATH.parent / "requests"
+# The anon key every `supabase start` uses unless the project sets its own JWT secret. It is public.
+LOCAL_ANON_KEY = ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9."
+                  "CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0")
+MEDIA_TYPES = {".png": "image/png", ".gif": "image/gif", ".mp4": "video/mp4"}
+_STATE = {"issues": {}}
 
 LOCK = threading.RLock()
 WAKE = threading.Event()
@@ -70,8 +83,9 @@ def http(method, url, headers=None, body=None, timeout=60):
     return json.loads(raw) if raw else {}
 
 
-def run(args, cwd=REPO, check=True):
-    p = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+def run(args, cwd=REPO, check=True, env=None, input=None):
+    p = subprocess.run(args, cwd=cwd, capture_output=True, text=True, input=input,
+                       env={**os.environ, **env} if env else None)
     if check and p.returncode:
         raise RuntimeError(f"{' '.join(args)} -> {p.returncode}: {(p.stderr or p.stdout).strip()[:500]}")
     return p
@@ -208,9 +222,32 @@ def set_needs_human(rec, on):
 
 
 def comment(rec, body):
+    """Comment on the issue as the factory; returns the comment's URL."""
     if mutate(f"comment on {rec['identifier']}: {body[:80]}"):
-        linear("mutation($id: String!, $b: String!) { commentCreate(input: { issueId: $id, body: $b }) { success } }",
-               id=rec["issue_id"], b=f"{FACTORY_MARK} {body}")
+        out = linear("mutation($id: String!, $b: String!) { commentCreate(input: { issueId: $id, body: $b }) "
+                     "{ success comment { url } } }", id=rec["issue_id"], b=f"{FACTORY_MARK} {body}")
+        return (out["commentCreate"].get("comment") or {}).get("url", "")
+    return ""
+
+
+def linear_upload(path):
+    """Upload a file to Linear's storage; returns its asset URL for use in markdown."""
+    ctype = MEDIA_TYPES[path.suffix.lower()]
+    up = linear("""mutation($c: String!, $f: String!, $s: Int!) { fileUpload(contentType: $c, filename: $f, size: $s) {
+      success uploadFile { uploadUrl assetUrl headers { key value } } } }""",
+                c=ctype, f=path.name, s=path.stat().st_size)["fileUpload"]
+    if not up.get("success") or not up.get("uploadFile"):
+        raise RuntimeError(f"Linear refused the upload of {path.name}")
+    target = up["uploadFile"]
+    headers = {"Content-Type": ctype, "Cache-Control": "public, max-age=31536000",
+               **{h["key"]: h["value"] for h in target["headers"]}}
+    req = urllib.request.Request(target["uploadUrl"], data=path.read_bytes(), method="PUT", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            r.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Upload of {path.name} -> {e.code}: {e.read()[:300]!r}") from None
+    return target["assetUrl"]
 
 
 def issue_block(issue):
@@ -564,6 +601,239 @@ def start_fix(rec, reason, head):
     start_station(rec, "fix", render("fix.md", head=head, reason=reason, result=result_block(), **paths(rec)))
 
 
+# ── demo ──────────────────────────────────────────────────────────────────────
+
+def demo_key():
+    return os.environ.get("DEMO_SUPABASE_ANON_KEY") or DEMO.get("supabase_anon_key") or LOCAL_ANON_KEY
+
+
+def demo_busy():
+    return sum(r["stage"] == "demo" for r in _STATE["issues"].values()) >= DEMO.get("max_parallel", 1)
+
+
+def start_demo(rec, head, back):
+    """Record before/after screenshots and use-case videos of the approved head; `back` is the stage to return to."""
+    git("fetch", "origin", rec["base"], cwd=rec["worktree"])
+    base_sha = git("rev-parse", f"origin/{rec['base']}", cwd=rec["worktree"])
+    demo_dir = EVIDENCE / rec["identifier"] / head[:12]
+    if mutate(f"create {demo_dir}"):
+        demo_dir.mkdir(parents=True, exist_ok=True)
+    rec.update(demo_for=head, demo_back=back, demo_dir=str(demo_dir))
+    rec.pop("demo_wait_noticed", None)
+    issue = issue_detail(rec["issue_id"])
+    start_station(rec, "demo", render(
+        "demo.md", head=head, base_sha=base_sha, demo_dir=demo_dir, before_worktree=f"{rec['worktree']}-before",
+        supabase_url=DEMO.get("supabase_url", "http://host.docker.internal:54321"), supabase_anon_key=demo_key(),
+        port_before=DEMO.get("port_before", 5181), port_after=DEMO.get("port_after", 5182), issue=issue_block(issue),
+        result=result_block(extra_fields=', "manifest": "<path of manifest.json>"'), **paths(rec)))
+
+
+def load_manifest(demo_dir):
+    """The demo manifest, with every file it names checked to exist inside the demo folder."""
+    path = demo_dir / "manifest.json"
+    if not path.is_file():
+        raise Stop(f"The demo station finished without `{path}`.")
+    try:
+        manifest = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        raise Stop(f"`{path}` is not valid JSON: {e}") from None
+    root = demo_dir.resolve()
+    limit = DEMO.get("max_file_mb", 50)
+
+    def check(name, suffixes):
+        if not name:
+            return
+        f = (demo_dir / name).resolve()
+        if root not in f.parents or not f.is_file() or f.suffix.lower() not in suffixes:
+            raise Stop(f"The demo manifest names `{name}`, which is not a {'/'.join(suffixes)} file in `{demo_dir}`.")
+        if f.stat().st_size > limit * 1_000_000:
+            raise Stop(f"`{name}` is over {limit} MB.")
+
+    screens, videos = manifest.get("screens") or [], manifest.get("videos") or []
+    for screen in screens:
+        for shot in screen.get("shots") or []:
+            if not shot.get("after"):
+                raise Stop(f"The demo screen `{screen.get('title')}` has a shot without an `after` image.")
+            for key in ("before", "after", "design"):
+                check(shot.get(key), {".png"})
+    for video in videos:
+        if not video.get("mp4"):
+            raise Stop(f"The demo video `{video.get('title')}` has no MP4.")
+        check(video["mp4"], {".mp4"})
+        check(video.get("gif"), {".gif"})
+    if not videos:
+        raise Stop("The demo has no video.")
+    if not any(screen.get("shots") for screen in screens):
+        raise Stop("The demo has no screenshots.")
+    return manifest
+
+
+def demo_files(manifest):
+    names = [shot.get(k) for s in manifest["screens"] for shot in s.get("shots") or [] for k in ("design", "before", "after")]
+    names += [v.get(k) for v in manifest["videos"] for k in ("gif", "mp4")]
+    return list(dict.fromkeys(n for n in names if n))
+
+
+def demo_markdown(rec, manifest, url, target, link=""):
+    """The demo as markdown. `url(name)` gives a file's URL; GitHub gets tables and GIFs, Linear plays the MP4s."""
+    pr = f"[PR #{rec['pr_number']}]({rec['pr_url']})"
+    out = [f"**Demo of `{rec['demo_for'][:8]}`** for {pr}. Judge the feature from these; the code passed Verify and the-judge.",
+           "", manifest.get("summary", "").strip()]
+    if link:
+        out += ["", link]
+    out += ["", "## Screens"]
+    for screen in manifest["screens"]:
+        out += ["", f"### {screen.get('title', 'Screen')}"]
+        if screen.get("criterion"):
+            out += [f"_{screen['criterion']}_"]
+        for shot in screen.get("shots") or []:
+            label = " · ".join(str(x) for x in (f"{shot['viewport']} px" if shot.get("viewport") else "",
+                                                shot.get("theme", "")) if x)
+            cols = [(h, shot.get(k)) for h, k in (("Design", "design"), ("Before", "before"), ("After", "after"))
+                    if shot.get(k) or k == "before"]
+            if target == "github":
+                width = 220 if str(shot.get("viewport")) == "390" else (300 if len(cols) == 3 else 420)
+                cells = [f'<img src="{url(f)}" width="{width}">' if f else "_new screen_" for _, f in cols]
+                out += ["", f"**{label}**", "", "| " + " | ".join(h for h, _ in cols) + " |",
+                        "|" + " --- |" * len(cols), "| " + " | ".join(cells) + " |"]
+            else:
+                out += ["", f"**{label}**"]
+                for h, f in cols:
+                    out += [f"{h}: new screen, nothing to compare." if not f else f"{h}:\n![{h}: {screen.get('title', '')}]({url(f)})"]
+        if screen.get("note"):
+            out += ["", f"> {screen['note']}"]
+    out += ["", "## Use cases"]
+    for video in manifest["videos"]:
+        out += ["", f"### {video.get('title', 'Use case')}"]
+        if video.get("criterion"):
+            out += [f"_{video['criterion']}_"]
+        out += [f"{i}. {step}" for i, step in enumerate(video.get("steps") or [], 1)]
+        seconds = f", {video['seconds']} s" if video.get("seconds") else ""
+        if target == "github":
+            if video.get("gif"):
+                out += ["", f"![{video.get('title', '')}]({url(video['gif'])})"]
+            out += ["", f"[▶ Full video (MP4{seconds})]({url(video['mp4'], raw=False)})"]
+        else:
+            out += ["", f"![{video.get('title', '')}]({url(video['mp4'])})", f"[▶ Open the video{seconds}]({url(video['mp4'])})"]
+    if manifest.get("gaps"):
+        out += ["", "## Not shown"] + [f"- {gap}" for gap in manifest["gaps"]]
+    return "\n".join(out)
+
+
+def publish_linear(rec, manifest, demo_dir):
+    if not mutate(f"upload the demo of {rec['identifier']} to Linear"):
+        return ""
+    urls = {name: linear_upload(demo_dir / name) for name in demo_files(manifest) if not name.endswith(".gif")}
+    return comment(rec, demo_markdown(rec, manifest, lambda name, raw=True: urls[name], "linear"))
+
+
+# Vercel builds every pushed branch and reads vercel.json from the pushed commit, so the evidence branch
+# carries its own vercel.json that turns its deployments off.
+EVIDENCE_BRANCH_FILES = {
+    "vercel.json": json.dumps({"git": {"deploymentEnabled": False}}, indent=2) + "\n",
+    "README.md": "# factory-evidence\n\nScreenshots and videos the Hestia factory records for pull request review.\n"
+                 "Media only: never merge this branch, and nothing here is deployed.\n",
+}
+
+
+def push_evidence(rec, files, demo_dir):
+    """Commit the demo files to the evidence branch with a private index, never touching a work tree."""
+    branch = DEMO.get("evidence_branch", "factory-evidence")
+    prefix = f"{rec['identifier']}/{rec['demo_for'][:12]}"
+    for _ in range(3):
+        run(["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"], check=False)
+        parent = git("rev-parse", f"refs/remotes/origin/{branch}") if ref_exists(f"refs/remotes/origin/{branch}") else ""
+        fd, index = tempfile.mkstemp(prefix="evidence-index-")
+        os.close(fd)
+        os.unlink(index)
+        env = {"GIT_INDEX_FILE": index}
+        try:
+            run(["git", "read-tree", parent] if parent else ["git", "read-tree", "--empty"], env=env)
+            for path, text in EVIDENCE_BRANCH_FILES.items():
+                blob = run(["git", "hash-object", "-w", "--stdin"], input=text).stdout.strip()
+                run(["git", "update-index", "--add", "--cacheinfo", f"100644,{blob},{path}"], env=env)
+            for name in files:
+                blob = git("hash-object", "-w", str(demo_dir / name))
+                run(["git", "update-index", "--add", "--cacheinfo", f"100644,{blob},{prefix}/{name}"], env=env)
+            tree = run(["git", "write-tree"], env=env).stdout.strip()
+        finally:
+            Path(index).unlink(missing_ok=True)
+        commit = git("commit-tree", tree, *(["-p", parent] if parent else []),
+                     "-m", f"evidence: {rec['identifier']} demo of {rec['demo_for'][:12]}")
+        if run(["git", "push", "origin", f"{commit}:refs/heads/{branch}"], check=False).returncode == 0:
+            return commit, prefix
+    raise RuntimeError(f"Could not push the demo to `{branch}`.")
+
+
+def publish_github(rec, manifest, demo_dir, linear_url):
+    if not mutate(f"push the demo of {rec['identifier']} and comment on PR #{rec['pr_number']}"):
+        return ""
+    commit, prefix = push_evidence(rec, demo_files(manifest), demo_dir)
+    repo = CONFIG["github_repo"]
+
+    def url(name, raw=True):
+        return f"https://github.com/{repo}/blob/{commit}/{prefix}/{name}" + ("?raw=true" if raw else "")
+
+    link = f"The videos play inline on the Linear issue: {linear_url}" if linear_url else ""
+    body = f"{FACTORY_MARK} " + demo_markdown(rec, manifest, url, "github", link)
+    fd, path = tempfile.mkstemp(suffix=".md")
+    with os.fdopen(fd, "w") as f:
+        f.write(body)
+    try:
+        out = run(["gh", "pr", "comment", str(rec["pr_number"]), "--body-file", path], cwd=rec["worktree"]).stdout
+    finally:
+        os.unlink(path)
+    found = re.search(r"https://github\.com/\S+", out)
+    return found.group(0) if found else rec["pr_url"]
+
+
+def after_demo(rec, result):
+    head = rec["demo_for"]
+    if git("status", "--porcelain", cwd=rec["worktree"]):
+        raise Stop("The demo station left uncommitted changes in the working tree.")
+    if git("rev-parse", "HEAD", cwd=rec["worktree"]) != head:
+        raise Stop("The head commit changed during the demo.")
+    demo_dir = Path(rec["demo_dir"])
+    manifest = load_manifest(demo_dir)
+    try:
+        linear_url = publish_linear(rec, manifest, demo_dir)
+        github_url = publish_github(rec, manifest, demo_dir, linear_url)
+    except RuntimeError as e:
+        raise Stop(f"Recording worked, but publishing the demo failed: {e}") from None
+    rec["demo_head"] = head
+    rec.setdefault("demos", []).append({"head": head, "linear": linear_url, "github": github_url, "at": now()})
+    shots = sum(len(s.get("shots") or []) for s in manifest["screens"])
+    notify(rec, f"Demo ready: {shots} before/after comparisons and {len(manifest['videos'])} videos. "
+                f"<{linear_url}|Watch on Linear> · <{github_url}|PR comment>")
+    rec["stage"] = rec.pop("demo_back", "final")
+    if rec["stage"] == "final":
+        check_final(rec)
+
+
+def take_requests(state):
+    """A file `demo-<ISSUE>` in the requests folder records the demo of a pull request already in review."""
+    if not REQUESTS.is_dir():
+        return
+    for req in sorted(REQUESTS.iterdir(), key=lambda p: p.stat().st_mtime):
+        kind, _, ident = req.name.partition("-")
+        rec = state["issues"].get(ident)
+        if kind != "demo" or not rec or rec["stage"] != "review" or not rec.get("pr_number"):
+            log.warning("ignoring request %s: no issue in review with that identifier", req.name)
+            if mutate(f"remove request {req.name}"):
+                req.unlink(missing_ok=True)
+            continue
+        if demo_busy() or not mutate(f"start the demo of {ident}"):
+            return
+        req.unlink(missing_ok=True)
+        try:
+            start_demo(rec, require_clean_and_pushed(rec), "review")
+        except Stop as stop:
+            stop_for_human(rec, str(stop))
+        except Exception:
+            log.error("%s demo request failed:\n%s", ident, traceback.format_exc())
+        save_state(state)
+
+
 def after_plan(rec, result):
     tasks = result.get("tasks_file", "")
     require_tracked(rec, tasks)
@@ -631,13 +901,23 @@ def check_final(rec):
     if pr["mergeable"] == "CONFLICTING":
         return start_fix(rec, f"GitHub reports that the pull request conflicts with `{rec['base']}`. "
                               f"Merge `origin/{rec['base']}`, resolve the conflicts, commit and push.", head)
+    if DEMO.get("enabled") and rec.get("demo_head") != head:
+        if not demo_busy():
+            return start_demo(rec, head, "final")
+        if not rec.get("demo_wait_noticed"):
+            rec["demo_wait_noticed"] = True
+            notify(rec, "Approved. The demo starts when the running one finishes.")
+        return
+    demo = next((d for d in reversed(rec.get("demos", [])) if d["head"] == head), None)
     if mutate(f"mark PR #{rec['pr_number']} ready"):
         run(["gh", "pr", "ready", str(rec["pr_number"])], cwd=rec["worktree"])
     set_status(rec, "review")
     rec["stage"] = "review"
     comment(rec, f"the-judge approved the head commit ({rec['last_review']}). "
-                 f"The pull request is ready for review: {rec['pr_url']}")
-    notify(rec, f"the-judge: APPROVE. <{rec['pr_url']}|PR #{rec['pr_number']}> is ready for your review.", human=True)
+                 f"The pull request is ready for review: {rec['pr_url']}"
+                 + (f"\n\nDemo for your approval: {demo['linear']}" if demo else ""))
+    notify(rec, f"the-judge: APPROVE. <{rec['pr_url']}|PR #{rec['pr_number']}> is ready for your review."
+                + (f" Demo: <{demo['linear']}|Linear> · <{demo['github']}|PR comment>." if demo else ""), human=True)
 
 
 def wait_ci(rec, head, then):
@@ -695,7 +975,8 @@ def after_fix(rec, result):
     sync_then_ci(rec, head)
 
 
-AFTER = {"plan": after_plan, "build": after_build, "verify": after_verify, "judge": after_judge, "fix": after_fix}
+AFTER = {"plan": after_plan, "build": after_build, "verify": after_verify, "judge": after_judge, "fix": after_fix,
+         "demo": after_demo}
 
 
 # ── Slack mentions: ad-hoc requests outside the issue flow ───────────────────
@@ -976,6 +1257,7 @@ IDLE_STAGES = DONE_STAGES + ("waiting", "blocked", "queued")
 
 def tick(state):
     with LOCK:
+        _STATE["issues"] = state["issues"]
         live = [r for r in state["issues"].values() if r["stage"] not in IDLE_STAGES]
         for rec in live:
             try:
@@ -995,6 +1277,10 @@ def tick(state):
                 keep_in_review(rec)
             except Exception:
                 log.error("%s review status failed:\n%s", rec["identifier"], traceback.format_exc())
+        try:
+            take_requests(state)
+        except Exception:
+            log.error("requests failed:\n%s", traceback.format_exc())
         try:
             pickup(state)
         except Exception:

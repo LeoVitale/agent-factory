@@ -29,5 +29,16 @@
     "channel_prefix": "hestia-",
     "default_channel": "hestia-factory",
     "project_channels": {}
+  },
+  "demo": {
+    "enabled": true,
+    "supabase_url": "http://host.docker.internal:54321",
+    "supabase_anon_key": "",
+    "evidence_path": "/projects/factory-evidence",
+    "evidence_branch": "factory-evidence",
+    "max_parallel": 1,
+    "max_file_mb": 50,
+    "port_before": 5181,
+    "port_after": 5182
   }
 }
