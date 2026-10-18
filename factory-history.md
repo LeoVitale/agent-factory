@@ -161,7 +161,23 @@ Este é o registro de como a fábrica foi construída, desde a primeira pergunta
   - "Atrasados" e as outras abas dão 400 na base e no PR, provavelmente por migrations atrasadas no Supabase local.
 - **Incidente:** o primeiro push em `factory-evidence` disparou deploys de preview no Vercel. O `hestia-admin-staging` falhou sem `dist`, e o `hestia-cleaner-web-staging` publicou um preview vazio. O branch passou a levar um `vercel.json` com `git.deploymentEnabled: false`.
 
-## 11. Lições aprendidas
+## 11. Medição e ajustes de velocidade (18:15–19:20)
+
+- **Medição nas 25 conversas da fábrica (360 min no total):**
+  - modelo pensando entre um passo e outro: 295 min (82%), em 1.491 passos com mediana de 5 s e p90 de 26 s; 35 passos com mais de 1 min somam 81 min;
+  - esperando o CI dentro da conversa (`gh run watch`): 19 min;
+  - Playwright e Vite nas demos: 11 min; testes, lint, typecheck, git e pnpm: cerca de 15 min;
+  - do início da conversa à primeira ação: 19 s de mediana.
+- **Conclusão:** o gargalo é o modelo e o fluxo, não a máquina. Mover os projetos para um volume do Docker pouparia poucos minutos.
+- **Ajustes:**
+  - Build e Fix deixaram de esperar o CI (o `iterate` saiu dos prompts);
+  - a fábrica confere as conversas em andamento a cada 15 s, sem ler o Linear;
+  - perfil por etapa: a Demo passou a usar esforço medium (perfil **Cursor-ACP-medium**);
+  - kit da demo (`demo-kit.mjs`) com login, prints, vídeo e manifesto prontos;
+  - o Slack MCP foi desligado no Canvas, e as conversas não recebem mais o token do bot.
+- **A medir:** a próxima demo (HES-106) é a primeira com esforço medium e com o kit.
+
+## 12. Lições aprendidas
 
 | Lição                                                                       | Consequência                                                                                                                  |
 | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -181,8 +197,9 @@ Este é o registro de como a fábrica foi construída, desde a primeira pergunta
 | Rodar o app de verdade acha o que os testes em jsdom não acham              | A primeira demo achou um controle cortado em 390 px e um filtro que não filtra, depois do APPROVE.                            |
 | A demo só é tão boa quanto o banco local                                    | Migrations atrasadas no Supabase do Mac viram telas com erro. A demo as registra em `gaps` em vez de esconder.                |
 | O Canvas só pede ao Cursor a variante padrão de cada modelo                 | Contexto e esforço vêm do proxy ACP, que liga o seletor de parâmetros do Cursor.                                              |
+| Quase todo o tempo de uma conversa é o modelo pensando entre passos         | Para ganhar velocidade, cortar passos e esforço onde o julgamento pesa pouco. Disco e CPU quase não mudam o total.            |
 
-## 12. Artefatos criados
+## 13. Artefatos criados
 
 - **Fora do repo (`~/agent-sandbox`):**
   - `Dockerfile`, `compose.yaml`, `sandbox-entrypoint.sh`, `cursor-mcp.json`, `.env` (apenas os nomes das chaves);

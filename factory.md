@@ -58,7 +58,7 @@ Os dois containers sobem com o mesmo `compose.yaml` e compartilham `/projects` e
 | Etapa  | Skill                                                                                            | Papel                                                                                                                                                                                                                                                                                     |
 | ------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Plan   | `tlc-plan`                                                                                       | Transforma a issue em tasks com critérios observáveis. Recusa adivinhar e registra perguntas em `Unresolved`.                                                                                                                                                                             |
-| Build  | `tlc-implement` (`profile: ui`, `handoff: on`) + `iterate` (só para o CI)                        | Escreve o checklist com provas, implementa e roda cada prova.                                                                                                                                                                                                                             |
+| Build  | `tlc-implement` (`profile: ui`, `handoff: on`)                                                   | Escreve o checklist com provas, implementa e roda cada prova.                                                                                                                                                                                                                             |
 | Verify | Verifier do `tlc-implement` (`references/verify.md`)                                             | Agente novo, que não escreveu o código. Roda as provas, confere asserções e injeta falhas. Escreve o `.verified.md` com `**Verdict**`.                                                                                                                                                    |
 | Judge  | `the-judge`                                                                                      | Roda as checagens do repo, pesquisa documentação oficial e posta uma revisão consolidada com veredito.                                                                                                                                                                                    |
 | Fix    | regras do `tlc-implement`                                                                        | Corrige o que falhou sem enfraquecer testes e sem mudar checks.                                                                                                                                                                                                                           |
@@ -202,7 +202,7 @@ Só as suas mensagens contam: o `SLACK_PERSON_ID` no Slack e o dono da chave no 
 
 ## 12. Configuração e operação
 
-**Principais chaves do `config.json`:** `team_key`, `states`, `label`, `needs_human_label`, `agent_profile_id` (Cursor-ACP), `github_repo`, `base_branch`, `max_active` (3), `max_fix_rounds` (3), `max_base_syncs` (3), `poll_seconds` (120), `no_checks_timeout_seconds` (900), `schema_paths`, `mentions.channels`, `slack.project_channels`, `canvas_public_url` e `demo` (`enabled`, `supabase_url`, `supabase_anon_key`, `evidence_path`, `evidence_branch`, `max_parallel`, `max_file_mb`, `port_before`, `port_after`). Sem `supabase_anon_key`, vale a chave anon padrão do `supabase start`, e a variável `DEMO_SUPABASE_ANON_KEY` tem precedência.
+**Principais chaves do `config.json`:** `team_key`, `states`, `label`, `needs_human_label`, `agent_profile_id` (Cursor-ACP), `github_repo`, `base_branch`, `max_active` (3), `max_fix_rounds` (3), `max_base_syncs` (3), `poll_seconds` (120), `no_checks_timeout_seconds` (900), `schema_paths`, `mentions.channels`, `slack.project_channels`, `canvas_public_url` `active_poll_seconds` (15), `station_profiles` (perfil por etapa) e `demo` (`enabled`, `supabase_url`, `supabase_anon_key`, `evidence_path`, `evidence_branch`, `max_parallel`, `max_file_mb`, `port_before`, `port_after`). Sem `supabase_anon_key`, vale a chave anon padrão do `supabase start`, e a variável `DEMO_SUPABASE_ANON_KEY` tem precedência.
 
 **Comandos úteis:**
 
@@ -222,6 +222,14 @@ docker compose -f ~/agent-sandbox/compose.yaml restart factory
 jq '.issues | map_values({stage, pr_number, round})' ~/agent-sandbox/factory-state/state.json
 ```
 
+**Velocidade:**
+
+- Build e Fix não esperam o CI: fazem push e encerram, e a fábrica espera o CI e abre um Fix se ele falhar.
+- Entre os ciclos completos de 2 minutos, a fábrica confere a cada 15 s (`active_poll_seconds`) só as conversas em andamento, pelo Canvas e sem ler o Linear, e começa a próxima etapa assim que uma termina.
+- `station_profiles` escolhe o perfil de cada etapa. A Demo usa o **Cursor-ACP-medium** (`grok-4.7`, 256k, esforço medium, fast); as outras usam o **Cursor-ACP** (esforço high).
+- A Demo usa o kit `factory/demo-kit.mjs`, que a fábrica copia para `projects/.demo-tools/` antes de cada demo: login com o seed, prints de antes, depois e design, vídeo com MP4 e GIF e o manifesto.
+- O Slack MCP está desligado no Canvas: quem fala no Slack é o orquestrador, e as conversas não recebem mais o token do bot.
+
 Gravar a demo de um PR que já está em In review (ele volta para In review sem mudar o status no Linear):
 
 ```bash
@@ -232,6 +240,7 @@ Testes da etapa de demo, sem tocar em Linear, GitHub ou Slack:
 
 ```bash
 python3 tools/agent-factory/factory/tests/test_demo_station.py tools/agent-factory/factory
+python3 tools/agent-factory/factory/tests/test_flow_speed.py tools/agent-factory/factory
 ```
 
 - **Mudanças:** prompts e `factory.py` são montados só para leitura no container, então basta reiniciar o serviço `factory`. Uma mudança no `Dockerfile` exige `docker compose build` e depois `up -d`.
