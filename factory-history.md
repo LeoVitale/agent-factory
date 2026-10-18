@@ -16,6 +16,7 @@ Este é o registro de como a fábrica foi construída, desde a primeira pergunta
 | Primeiro APPROVE da the-judge e primeiro PR em In review (#72) | 18/10 07:20   |
 | Três PRs abertos em In review (#72, #73, #74)                  | 18/10 08:15   |
 | Documentação e auditoria da fábrica (`factory.md`)             | 18/10 14:06   |
+| Etapa Demo: primeira demo publicada (HES-104)                  | 18/10 16:12   |
 
 ## 1. Ponto de partida (18/10, 00:18)
 
@@ -138,32 +139,61 @@ Este é o registro de como a fábrica foi construída, desde a primeira pergunta
   - a etapa final não confere o CI do último commit.
 - **Resultado:** [factory.md](factory.md), com arquitetura, ferramentas, fluxo, resultados e cerca de 60 melhorias priorizadas.
 
-## 10. Lições aprendidas
+## 10. Etapa Demo (15:28–16:50)
 
-| Lição                                                                       | Consequência                                                                                                                 |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Tokens fine-grained do GitHub não têm a permissão **Checks**                | Ler o CI pelas execuções do Actions e pelos commit statuses. A skill `iterate` (`gh pr checks`) não funciona com esse token. |
-| O GitHub não deixa o autor aprovar o próprio PR                             | A the-judge posta COMMENT com "Intended verdict". A aprovação dela não conta para proteção de branch.                        |
-| Repositório privado no plano Free não tem proteção de branch nem rulesets   | Hoje, as regras de push e merge existem só no prompt.                                                                        |
-| Eventos do Slack só chegam depois de **Save Changes** e reinstalação do app | Uma configuração que aparece certa na tela pode não estar ativa.                                                             |
-| Uma menção só notifica quem está no canal                                   | A fábrica convida você para os canais que cria.                                                                              |
-| A automação de PR do GitHub no Linear mexe no status                        | Ela desfaz o In review quando o PR sai do rascunho. Ajustar em Team settings → Workflow.                                     |
-| Fora de um projeto, o corepack baixa a versão mais nova do pnpm             | Dentro do repo, ele respeita o `packageManager`. Sem TTY, é preciso desligar o prompt de download.                           |
-| Vistos do Mac, os worktrees do container aparecem como `prunable`           | Nunca rodar `git worktree prune` nesse clone a partir do Mac.                                                                |
-| Workflows de `pull_request` filtram pela **base** do PR                     | Sem `feat/**`, PRs entre branches de feature entram sem CI.                                                                  |
-| Um PR pode receber merge antes da revisão                                   | As correções da the-judge viraram um PR novo (#69).                                                                          |
-| O jsdom não enxerga CSS computado                                           | Os dois achados da the-judge foram de altura e contraste, e o Verify não pegou nenhum dos dois.                              |
-| Agentes gastam muito tempo esperando o CI dentro da conversa                | Foram 36% do tempo de agente nas primeiras três issues.                                                                      |
+- **O pedido:** aprovar a feature por vídeo em vez de aprovar o código. Depois da the-judge, prints de antes e depois e um ou mais vídeos, conforme os casos de uso e a complexidade.
+- **Decisões:**
+  - os dados vêm do Supabase local do Mac, com o seed, e nunca de staging;
+  - a demo aparece no Linear (vídeos tocando) e no PR (prints e GIFs inline, MP4 como link);
+  - roda só depois do APPROVE, uma vez por commit aprovado, antes de In review.
+- **Como ficou:**
+  - etapa `demo` no `factory.py`, prompt `prompts/demo.md` e testes em `factory/tests/test_demo_station.py`;
+  - o agente roda o admin duas vezes (base e PR), grava com Playwright e o Chromium do sandbox e escreve `manifest.json`;
+  - a fábrica confere o manifesto, sobe a mídia no Linear (`fileUpload`), faz commit dela no branch `factory-evidence` sem work tree e comenta no PR;
+  - PRs que já estavam em In review recebem a demo por um pedido em `factory-state/requests/`.
+- **Piloto nas três issues em In review:**
+  - **HES-104 (#72):** 11 comparações em 23 prints e 3 vídeos, publicada às 16:12 depois de cerca de 20 minutos de conversa;
+  - **HES-103 (#73):** 9 comparações e 5 vídeos, publicada às 16:39;
+  - **HES-105 (#74):** em andamento quando este registro foi escrito.
+- **O que a demo achou depois do APPROVE (HES-104):**
+  - em 390 px, o controle "Filtros" fica cortado para fora da tela;
+  - escolher um faxineiro em "Ativos" não filtra os cards;
+  - "Atrasados" e as outras abas dão 400 na base e no PR, provavelmente por migrations atrasadas no Supabase local.
+- **Incidente:** o primeiro push em `factory-evidence` disparou deploys de preview no Vercel. O `hestia-admin-staging` falhou sem `dist`, e o `hestia-cleaner-web-staging` publicou um preview vazio. O branch passou a levar um `vercel.json` com `git.deploymentEnabled: false`.
 
-## 11. Artefatos criados
+## 11. Lições aprendidas
+
+| Lição                                                                       | Consequência                                                                                                                  |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Tokens fine-grained do GitHub não têm a permissão **Checks**                | Ler o CI pelas execuções do Actions e pelos commit statuses. A skill `iterate` (`gh pr checks`) não funciona com esse token.  |
+| O GitHub não deixa o autor aprovar o próprio PR                             | A the-judge posta COMMENT com "Intended verdict". A aprovação dela não conta para proteção de branch.                         |
+| Repositório privado no plano Free não tem proteção de branch nem rulesets   | Hoje, as regras de push e merge existem só no prompt.                                                                         |
+| Eventos do Slack só chegam depois de **Save Changes** e reinstalação do app | Uma configuração que aparece certa na tela pode não estar ativa.                                                              |
+| Uma menção só notifica quem está no canal                                   | A fábrica convida você para os canais que cria.                                                                               |
+| A automação de PR do GitHub no Linear mexe no status                        | Ela desfaz o In review quando o PR sai do rascunho. Ajustar em Team settings → Workflow.                                      |
+| Fora de um projeto, o corepack baixa a versão mais nova do pnpm             | Dentro do repo, ele respeita o `packageManager`. Sem TTY, é preciso desligar o prompt de download.                            |
+| Vistos do Mac, os worktrees do container aparecem como `prunable`           | Nunca rodar `git worktree prune` nesse clone a partir do Mac.                                                                 |
+| Workflows de `pull_request` filtram pela **base** do PR                     | Sem `feat/**`, PRs entre branches de feature entram sem CI.                                                                   |
+| Um PR pode receber merge antes da revisão                                   | As correções da the-judge viraram um PR novo (#69).                                                                           |
+| O jsdom não enxerga CSS computado                                           | Os dois achados da the-judge foram de altura e contraste, e o Verify não pegou nenhum dos dois.                               |
+| Agentes gastam muito tempo esperando o CI dentro da conversa                | Foram 36% do tempo de agente nas primeiras três issues.                                                                       |
+| O Vercel faz deploy de todo branch que recebe push                          | Um branch só de mídia precisa do próprio `vercel.json` com `git.deploymentEnabled: false`, lido do commit que recebeu o push. |
+| Rodar o app de verdade acha o que os testes em jsdom não acham              | A primeira demo achou um controle cortado em 390 px e um filtro que não filtra, depois do APPROVE.                            |
+| A demo só é tão boa quanto o banco local                                    | Migrations atrasadas no Supabase do Mac viram telas com erro. A demo as registra em `gaps` em vez de esconder.                |
+| O Canvas só pede ao Cursor a variante padrão de cada modelo                 | Contexto e esforço vêm do proxy ACP, que liga o seletor de parâmetros do Cursor.                                              |
+
+## 12. Artefatos criados
 
 - **Fora do repo (`~/agent-sandbox`):**
   - `Dockerfile`, `compose.yaml`, `sandbox-entrypoint.sh`, `cursor-mcp.json`, `.env` (apenas os nomes das chaves);
-  - `factory/factory.py`, `factory/config.json`, `factory/prompts/*.md`;
+  - `factory/factory.py`, `factory/config.json`, `factory/prompts/*.md` (incluindo `demo.md`) e `factory/tests/test_demo_station.py`;
+  - `openhands-state/bin/cursor-acp-params.py` (proxy ACP) e os perfis Cursor-ACP e Cursor-Grok-500k-xhigh-fast;
+  - `projects/factory-evidence/` (mídia das demos) e `factory-state/requests/`;
   - `factory-state/state.json`, `projects/` (o clone e os worktrees);
   - `factory.md` e este arquivo.
 - **Repositório `LeoVitale/project-hestia`:**
   - PRs com merge: **#68** e **#69** (regras da fábrica no `AGENTS.md` e no `discover-linear-issue.mdc`), **#70** (teste instável), **#71** (CI para `feat/**` e campos da issue);
-  - PRs abertos da fábrica: **#72**, **#73** e **#74**.
+  - PRs abertos da fábrica: **#72**, **#73** e **#74**, com a demo comentada em cada um;
+  - branch `factory-evidence`, só com a mídia das demos.
 - **Linear:** labels `factory` e `factory:needs-human`. HES-103, 104 e 105 em In review, e HES-106 e 107 esperando.
 - **Slack:** canal `#hestia-visual-refresh`, criado pela fábrica, e menções atendidas no `#visual-refresh`. A automação "Slack Channel Monitor" está pausada no Canvas.
