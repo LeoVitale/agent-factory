@@ -31,7 +31,7 @@ Start the admin app twice with Vite, each from its own tree, with `VITE_SUPABASE
 
 Use another app the same way (for example `apps/cleaner-web`) when the change lives there.
 
-Drive the browser with Playwright in Node. Install tools once into `/projects/.demo-tools` (`npm i --prefix /projects/.demo-tools playwright-core ffmpeg-static`) and launch Chromium with `executablePath: '/usr/bin/chromium'` and `args: ['--no-sandbox']`; if that build does not work with `playwright-core`, use the Chromium Playwright already cached under `~/.cache/ms-playwright`. Write your scripts in `{{demo_dir}}/_work/`.
+Drive the browser with the demo kit, `/projects/.demo-tools/demo-kit.mjs`, which the factory installs before each demo. Read its header first: it launches Chromium, signs in with the seeded account, takes before, after and design shots with the file names below, records each video and converts it to MP4 and GIF, and checks and writes the manifest. Write one short script in `{{demo_dir}}/_work/` that imports the kit and only says what to show. If `/projects/.demo-tools/node_modules` is missing, run `npm i --prefix /projects/.demo-tools playwright-core ffmpeg-static` first. Use Playwright directly only for what the kit does not cover.
 
 ## 3. Screenshots: before, after and design
 
