@@ -20,6 +20,8 @@ services:
       AGENT_CANVAS_ALLOW_LAN_SESSION_KEY: "true"
       # Agents run without a TTY, so corepack must fetch the pinned pnpm without asking.
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      # RTK looks for a Claude Code hook because ~/.claude exists; the agents here use the Cursor hook.
+      RTK_SUPPRESS_HOOK_WARNING: "1"
       # Let the Cursor CLI read its own skills from the mounted folders instead
       # of OpenHands injecting its managed catalog on top.
       OH_ACP_SKILL_SOURCING: native

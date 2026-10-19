@@ -25,4 +25,9 @@ if [ "$#" -gt 0 ]; then
   exec "$@"
 fi
 
+# RTK's global Cursor hook in ~/.cursor/hooks.json. ACP sessions read only the
+# user-level hooks file, not the project's .cursor/hooks.json. Re-running only
+# keeps the entry in place.
+rtk init -g --agent cursor </dev/null >/dev/null || echo "rtk: could not install the Cursor hook" >&2
+
 exec /opt/agent-canvas/entrypoint.sh
