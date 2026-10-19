@@ -260,6 +260,88 @@ def issue_block(issue):
     return "\n".join(parts)
 
 
+# ── how the factory reads to people ───────────────────────────────────────────
+# Slack speaks Portuguese to the person; Linear and GitHub stay in English (AGENTS.md). Stations keep their
+# AGENTS.md names everywhere, each with one emoji.
+
+LOOK = {
+    "queued": ("⏳", "Queue"),
+    "blocked": ("🚧", "Blocked"),
+    "plan": ("🗺️", "Plan"),
+    "build": ("🔨", "Build"),
+    "fix": ("🔧", "Fix"),
+    "ci": ("🚦", "CI"),
+    "verify": ("🔍", "Verify"),
+    "judge": ("⚖️", "Judge"),
+    "final": ("🏁", "Final checks"),
+    "demo": ("🎬", "Demo"),
+    "review": ("👀", "Review"),
+    "waiting": ("🙋", "Needs you"),
+    "dropped": ("🚪", "Out"),
+    "refused": ("⛔", "Refused"),
+}
+
+
+def badge(stage):
+    emoji, name = LOOK.get(stage, ("▪️", str(stage).capitalize()))
+    return f"{emoji} {name}"
+
+
+def esc(text):
+    """Slack reads &, < and > as markup; escape them in text that did not come from the factory."""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def quote(text):
+    return "\n".join(f"> {line}" for line in (str(text).strip().splitlines() or [""]))
+
+
+def blob(ref, path):
+    return f"https://github.com/{CONFIG['github_repo']}/blob/{ref}/{path}"
+
+
+def plural(n, one, many):
+    return f"{n} {one if n == 1 else many}"
+
+
+def pipeline(rec):
+    """The progress line of the thread root: done steps ticked, the current one bold, the rest grey."""
+    steps = ["plan", "build"] + (["fix"] if rec.get("round") else []) + ["ci", "verify", "judge"]
+    steps += (["demo"] if DEMO.get("enabled") else []) + ["review"]
+    stage = rec["stage"]
+    at = rec.get("waiting_stage") if stage == "waiting" else stage
+    if at == "final":
+        at = "demo" if DEMO.get("enabled") else "review"
+    pos = steps.index(at) if at in steps else -1
+    planned = any(c["station"] == "plan" for c in rec.get("conversations", []))
+    out = []
+    for i, step in enumerate(steps):
+        emoji, name = LOOK[step]
+        if step == "fix":
+            name = f"Fix {rec['round']}/{MAX_ROUNDS}"
+        if i < pos:
+            out.append(f"{'⏭️' if step == 'plan' and not planned else '✅'} {name}")
+        elif i > pos:
+            out.append(f"⚪ {name}")
+        elif stage == "waiting":
+            out.append(f"🙋 *{name}*")
+        elif stage == "final":
+            out.append(f"⏳ {name}")
+        else:
+            out.append(f"{emoji} *{name}*")
+    return " › ".join(out)
+
+
+def root_note(rec):
+    stage = rec["stage"]
+    if stage == "waiting":
+        return f"🙋 Esperando você no {badge(rec.get('waiting_stage'))}"
+    if stage == "blocked":
+        return "🚧 Esperando " + (", ".join(rec.get("blocked_on") or []) or "outras entregas")
+    return {"queued": "⏳ Na fila", "final": "✅ Aprovado pela Judge", "review": "👀 Pronto para sua revisão",
+            "dropped": "🚪 Saiu da factory", "refused": "⛔ Não começou: falta algo na descrição"}.get(stage)
+
+
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def slack(method, **params):
@@ -310,10 +392,12 @@ def invite_person(channel):
 
 
 def root_text(rec):
-    pr = f"<{rec['pr_url']}|PR #{rec['pr_number']}>" if rec.get("pr_url") else "no PR yet"
-    stage = rec["stage"] if rec["stage"] != "waiting" else f"waiting for you ({rec.get('waiting_stage')})"
-    return (f"*<{rec['issue_url']}|{rec['identifier']}>* · {rec['title']}\n"
-            f"Station: *{stage}* · {pr} · round {rec.get('round', 0)}/{MAX_ROUNDS}")
+    facts = [note] if (note := root_note(rec)) else []
+    facts.append(f"🔗 <{rec['pr_url']}|PR #{rec['pr_number']}>" if rec.get("pr_url") else "🔗 Sem PR ainda")
+    if rec.get("round"):
+        facts.append(f"🔧 Correções: {rec['round']} de {MAX_ROUNDS}")
+    return (f"*<{rec['issue_url']}|{rec['identifier']} · {esc(rec['title'])}>*\n"
+            f"{pipeline(rec)}\n" + " · ".join(facts))
 
 
 def notify(rec, text, human=False):
@@ -388,7 +472,18 @@ def event_count(conv_id):
     return canvas("GET", f"/api/conversations/{conv_id}/events/count")
 
 
-def start_station(rec, station, prompt):
+STARTS = {
+    "plan": "transforma a issue em tarefas com critérios que dá para conferir.",
+    "build": "implementa as tarefas, roda as provas do checklist e abre um PR em rascunho.",
+    "verify": "um agente que não escreveu o código refaz cada prova do checklist.",
+    "judge": "um agente revisa o PR com a skill the-judge e dá o veredito.",
+    "fix": "corrige o que a última etapa apontou.",
+    "demo": "grava prints de antes e depois e um vídeo por caso de uso.",
+}
+
+
+def start_station(rec, station, prompt, title=None, detail=None):
+    """`title` and `detail` replace the station's usual Slack line, for a fix round or a handoff."""
     rec["stage"] = station
     if not mutate(f"start {station} conversation for {rec['identifier']}"):
         return
@@ -405,8 +500,9 @@ def start_station(rec, station, prompt):
     rec["events_mark"] = 0
     rec["station_started_at"] = now()
     rec.setdefault("conversations", []).append({"station": station, "id": out["id"], "at": now(), "profile": profile})
-    notify(rec, f"{station.capitalize()} started. <{CONFIG['canvas_public_url']}/conversations/{out['id']}"
-                f"|Open the conversation>")
+    emoji, name = LOOK[station]
+    notify(rec, f"{emoji} *{title or name + ' começou'}*: {detail or STARTS[station]}\n"
+                f"<{CONFIG['canvas_public_url']}/conversations/{out['id']}|👀 Acompanhar ao vivo>")
 
 
 def send_to_conversation(rec, text):
@@ -421,10 +517,11 @@ def station_result(rec):
     """None while the station runs; the parsed FACTORY_RESULT once it finished."""
     conv = canvas("GET", f"/api/conversations/{rec['conversation_id']}")
     status = conv.get("execution_status")
+    name = LOOK[rec["stage"]][1]
     if status in ("error", "stuck"):
-        raise Stop(f"The {rec['stage']} conversation ended with status `{status}`.")
+        raise Stop(f"The {name} conversation ended with status `{status}`.")
     if status == "waiting_for_confirmation":
-        raise Stop(f"The {rec['stage']} conversation is waiting for a confirmation in the Canvas.")
+        raise Stop(f"The {name} conversation is waiting for a confirmation in the Canvas.")
     if status != "finished" or event_count(rec["conversation_id"]) <= rec.get("events_mark", 0):
         return None
     text = canvas("GET", f"/api/conversations/{rec['conversation_id']}/agent_final_response").get("response", "")
@@ -432,11 +529,11 @@ def station_result(rec):
     for match in re.finditer(r"FACTORY_RESULT:\s*(\{.*\})", text):
         pass
     if not match:
-        raise Stop(f"The {rec['stage']} station finished without a FACTORY_RESULT line.")
+        raise Stop(f"The {name} station finished without a FACTORY_RESULT line.")
     try:
         return json.loads(match.group(1))
     except json.JSONDecodeError:
-        raise Stop(f"The {rec['stage']} station returned an unreadable FACTORY_RESULT: `{match.group(1)[:200]}`")
+        raise Stop(f"The {name} station returned an unreadable FACTORY_RESULT: `{match.group(1)[:200]}`")
 
 
 # ── git and GitHub ────────────────────────────────────────────────────────────
@@ -493,7 +590,7 @@ def sync_with_base(rec):
         run(["git", "merge", "--abort"], cwd=wt, check=False)
         raise Conflict(files or ["(git reported a failed merge)"])
     git("push", "origin", f"HEAD:{branch}", cwd=wt)
-    notify(rec, f"Merged the latest `{base}` into `{branch}`.")
+    notify(rec, f"🔄 *Base atualizada*: trouxe o `{base}` mais recente para `{branch}`.")
     return git("rev-parse", "HEAD", cwd=wt)
 
 
@@ -580,7 +677,10 @@ def start_build(rec, handoff=False):
     note = ("A previous Build conversation handed off. Continue from the handoff recorded in the checklist "
             f"`{rec.get('checklist')}`. Do not redo landed slices.") if handoff else ""
     start_station(rec, "build", render("build.md", issue=issue_block(issue), handoff=note, result=result_block(
-        extra_status=" | handoff", extra_fields=', "checklist": "<path of the checklist>"'), **paths(rec)))
+        extra_status=" | handoff", extra_fields=', "checklist": "<path of the checklist>"'), **paths(rec)),
+        **(dict(title="Build continua", detail="a conversa anterior encheu o contexto e passou o bastão. "
+                                               "Uma conversa nova segue do ponto marcado no checklist.")
+           if handoff else {}))
 
 
 def start_verify(rec, head):
@@ -591,15 +691,16 @@ def start_judge(rec, head):
     start_station(rec, "judge", render("judge.md", head=head, result=result_block(), **paths(rec)))
 
 
-def start_fix(rec, reason, head):
+def start_fix(rec, reason, head, why):
+    """`reason` instructs the agent; `why` tells the person, in Slack, what the round fixes."""
     rec["round"] = rec.get("round", 0) + 1
     if rec["round"] > MAX_ROUNDS:
         rec["round"] = MAX_ROUNDS
         rec["rounds_exhausted"] = True
         raise Stop(f"No `APPROVE` after {MAX_ROUNDS} fix rounds. Last failure: {reason}")
     rec["fix_from"] = head
-    notify(rec, f"Fix round {rec['round']}/{MAX_ROUNDS}: {reason}")
-    start_station(rec, "fix", render("fix.md", head=head, reason=reason, result=result_block(), **paths(rec)))
+    start_station(rec, "fix", render("fix.md", head=head, reason=reason, result=result_block(), **paths(rec)),
+                  title=f"Correção {rec['round']} de {MAX_ROUNDS}", detail=why)
 
 
 # ── demo ──────────────────────────────────────────────────────────────────────
@@ -680,49 +781,64 @@ def demo_files(manifest):
     return list(dict.fromkeys(n for n in names if n))
 
 
+VIEWPORT_LOOK = {"1440": "🖥️ Desktop", "390": "📱 Mobile"}
+THEME_LOOK = {"light": "☀️ Light", "night": "🌙 Night", "dark": "🌙 Night"}
+SHOT_COLUMNS = (("🎨 Design", "design"), ("⬅️ Before", "before"), ("✨ After", "after"))
+
+
 def demo_markdown(rec, manifest, url, target, link=""):
     """The demo as markdown. `url(name)` gives a file's URL; GitHub gets tables and GIFs, Linear plays the MP4s."""
     pr = f"[PR #{rec['pr_number']}]({rec['pr_url']})"
-    out = [f"**Demo of `{rec['demo_for'][:8]}`** for {pr}. Judge the feature from these; the code passed Verify and the-judge.",
-           "", manifest.get("summary", "").strip()]
+    shots = sum(len(s.get("shots") or []) for s in manifest["screens"])
+    gaps = manifest.get("gaps") or []
+    counts = [plural(shots, "before/after comparison", "before/after comparisons"),
+              plural(len(manifest["videos"]), "video", "videos")] + ([f"{len(gaps)} not shown"] if gaps else [])
+    out = [f"🎬 **Feature demo** for {pr} · commit `{rec['demo_for'][:8]}`", "",
+           "✅ This commit passed Verify and the-judge. Approve the **feature** from what you see here; "
+           "the code review stays on the pull request.", ""]
+    if manifest.get("summary", "").strip():
+        out += [f"**What changes:** {manifest['summary'].strip()}", ""]
+    out += [" · ".join(counts)]
     if link:
         out += ["", link]
-    out += ["", "## Screens"]
+    out += ["", "## 🖼️ Screens"]
     for screen in manifest["screens"]:
         out += ["", f"### {screen.get('title', 'Screen')}"]
         if screen.get("criterion"):
-            out += [f"_{screen['criterion']}_"]
+            out += [f"🎯 _{screen['criterion']}_"]
         for shot in screen.get("shots") or []:
-            label = " · ".join(str(x) for x in (f"{shot['viewport']} px" if shot.get("viewport") else "",
-                                                shot.get("theme", "")) if x)
-            cols = [(h, shot.get(k)) for h, k in (("Design", "design"), ("Before", "before"), ("After", "after"))
-                    if shot.get(k) or k == "before"]
+            viewport = str(shot.get("viewport") or "")
+            label = " · ".join(x for x in (VIEWPORT_LOOK.get(viewport, f"{viewport} px" if viewport else ""),
+                                           THEME_LOOK.get(shot.get("theme"), shot.get("theme") or "")) if x)
+            cols = [(h, shot.get(k)) for h, k in SHOT_COLUMNS if shot.get(k) or k == "before"]
             if target == "github":
-                width = 220 if str(shot.get("viewport")) == "390" else (300 if len(cols) == 3 else 420)
-                cells = [f'<img src="{url(f)}" width="{width}">' if f else "_new screen_" for _, f in cols]
+                width = 220 if viewport == "390" else (300 if len(cols) == 3 else 420)
+                cells = [f'<img src="{url(f)}" width="{width}">' if f else "🆕 _new screen_" for _, f in cols]
                 out += ["", f"**{label}**", "", "| " + " | ".join(h for h, _ in cols) + " |",
                         "|" + " --- |" * len(cols), "| " + " | ".join(cells) + " |"]
             else:
                 out += ["", f"**{label}**"]
                 for h, f in cols:
-                    out += [f"{h}: new screen, nothing to compare." if not f else f"{h}:\n![{h}: {screen.get('title', '')}]({url(f)})"]
+                    out += [f"{h}: 🆕 new screen, nothing to compare." if not f
+                            else f"{h}:\n![{h}: {screen.get('title', '')}]({url(f)})"]
         if screen.get("note"):
-            out += ["", f"> {screen['note']}"]
-    out += ["", "## Use cases"]
-    for video in manifest["videos"]:
-        out += ["", f"### {video.get('title', 'Use case')}"]
+            out += ["", f"> 👉 {screen['note']}"]
+    out += ["", "## ▶️ Use cases"]
+    for n, video in enumerate(manifest["videos"], 1):
+        out += ["", f"### {n}. {video.get('title', 'Use case')}"]
         if video.get("criterion"):
-            out += [f"_{video['criterion']}_"]
+            out += [f"🎯 _{video['criterion']}_"]
         out += [f"{i}. {step}" for i, step in enumerate(video.get("steps") or [], 1)]
         seconds = f", {video['seconds']} s" if video.get("seconds") else ""
         if target == "github":
             if video.get("gif"):
                 out += ["", f"![{video.get('title', '')}]({url(video['gif'])})"]
-            out += ["", f"[▶ Full video (MP4{seconds})]({url(video['mp4'], raw=False)})"]
+            out += ["", f"[▶️ Watch the full video (MP4{seconds})]({url(video['mp4'], raw=False)})"]
         else:
-            out += ["", f"![{video.get('title', '')}]({url(video['mp4'])})", f"[▶ Open the video{seconds}]({url(video['mp4'])})"]
-    if manifest.get("gaps"):
-        out += ["", "## Not shown"] + [f"- {gap}" for gap in manifest["gaps"]]
+            out += ["", f"![{video.get('title', '')}]({url(video['mp4'])})",
+                    f"[▶️ Open the video{seconds}]({url(video['mp4'])})"]
+    if gaps:
+        out += ["", "## 🙈 Not shown in this demo"] + [f"- {gap}" for gap in gaps]
     return "\n".join(out)
 
 
@@ -780,7 +896,7 @@ def publish_github(rec, manifest, demo_dir, linear_url):
     def url(name, raw=True):
         return f"https://github.com/{repo}/blob/{commit}/{prefix}/{name}" + ("?raw=true" if raw else "")
 
-    link = f"The videos play inline on the Linear issue: {linear_url}" if linear_url else ""
+    link = f"▶️ The videos play inline on the [Linear issue]({linear_url})." if linear_url else ""
     body = f"{FACTORY_MARK} " + demo_markdown(rec, manifest, url, "github", link)
     fd, path = tempfile.mkstemp(suffix=".md")
     with os.fdopen(fd, "w") as f:
@@ -809,8 +925,9 @@ def after_demo(rec, result):
     rec["demo_head"] = head
     rec.setdefault("demos", []).append({"head": head, "linear": linear_url, "github": github_url, "at": now()})
     shots = sum(len(s.get("shots") or []) for s in manifest["screens"])
-    notify(rec, f"Demo ready: {shots} before/after comparisons and {len(manifest['videos'])} videos. "
-                f"<{linear_url}|Watch on Linear> · <{github_url}|PR comment>")
+    notify(rec, f"🎬 *Demo pronta*: {plural(shots, 'comparação', 'comparações')} de antes e depois e "
+                f"{plural(len(manifest['videos']), 'vídeo', 'vídeos')}.\n"
+                f"<{linear_url}|▶️ Assistir no Linear> · <{github_url}|🖼️ Ver no PR>")
     rec["stage"] = rec.pop("demo_back", "final")
     if rec["stage"] == "final":
         check_final(rec)
@@ -849,14 +966,14 @@ def after_plan(rec, result):
     if blocks:
         raise Stop("The plan has blocking Unresolved questions:\n" + "\n".join(f"- {q}" for q in blocks))
     rec["tasks_file"] = tasks
-    notify(rec, f"Plan done: `{tasks}`." + (f" Blocks go-live: {'; '.join(go_live)}" if go_live else ""))
+    notify(rec, f"✅ *Plan pronto*: `{tasks}`."
+                + (f"\n⚠️ *Bloqueia o go-live*: {esc('; '.join(go_live))}" if go_live else ""))
     start_build(rec)
 
 
 def after_build(rec, result):
     if result.get("status") == "handoff":
         rec["checklist"] = result.get("checklist") or rec.get("checklist")
-        notify(rec, "Build handed off to a fresh conversation.")
         return start_build(rec, handoff=True)
     checklist = result.get("checklist", "")
     require_tracked(rec, checklist)
@@ -869,8 +986,9 @@ def after_build(rec, result):
     if not prs:
         raise Stop(f"No open pull request from `{rec['branch']}` into `{rec['base']}`.")
     rec["pr_number"], rec["pr_url"] = prs[0]["number"], prs[0]["url"]
-    notify(rec, f"Build done: checklist `{checklist}`, draft <{rec['pr_url']}|PR #{rec['pr_number']}>.")
-    comment(rec, f"Draft pull request: {rec['pr_url']}")
+    notify(rec, f"✅ *Build pronto*: PR em rascunho <{rec['pr_url']}|#{rec['pr_number']}> aberto. "
+                f"<{blob(head, checklist)}|📋 Checklist>")
+    comment(rec, f"🔨 **Build done.** Draft pull request: [PR #{rec['pr_number']}]({rec['pr_url']})")
     changed = git("diff", "--name-only", f"origin/{rec['base']}...HEAD", cwd=rec["worktree"]).splitlines()
     schema = [f for f in changed if any(f.startswith(p) for p in CONFIG["schema_paths"])]
     if schema and not rec.get("schema_acknowledged"):
@@ -885,9 +1003,12 @@ def sync_then_ci(rec, head):
     try:
         head = sync_with_base(rec)
     except Conflict as conflict:
+        files = conflict.args[0]
         return start_fix(rec, f"Merging `origin/{rec['base']}` into `{rec['branch']}` conflicts in "
-                              f"{', '.join(conflict.args[0])}. Merge `origin/{rec['base']}`, resolve the conflicts "
-                              "keeping the intent of both sides, run the affected proofs, commit and push.", head)
+                              f"{', '.join(files)}. Merge `origin/{rec['base']}`, resolve the conflicts "
+                              "keeping the intent of both sides, run the affected proofs, commit and push.", head,
+                         why=f"trazer o `{rec['base']}` mais recente conflita em "
+                             + ", ".join(f"`{f}`" for f in files[:5]) + (" e outros" if len(files) > 5 else "") + ".")
     wait_ci(rec, head, then="verify")
 
 
@@ -899,31 +1020,40 @@ def check_final(rec):
         if rec["base_syncs"] > CONFIG["max_base_syncs"]:
             raise Stop(f"`{rec['base']}` kept moving after review {CONFIG['max_base_syncs']} times. "
                        "Reply to merge it once more and run Verify and Judge again.")
-        notify(rec, f"`{rec['base']}` moved after the review. Merging it, then Verify and Judge run again.")
+        notify(rec, f"🔄 *O `{rec['base']}` andou depois da revisão*: vou trazer as mudanças, "
+                    "e Verify e Judge rodam de novo.")
         return sync_then_ci(rec, head)
     pr = gh_json("pr", "view", str(rec["pr_number"]), "--json", "mergeable,headRefOid", cwd=rec["worktree"])
     if pr["headRefOid"] != head or pr["mergeable"] == "UNKNOWN":
         return
     if pr["mergeable"] == "CONFLICTING":
         return start_fix(rec, f"GitHub reports that the pull request conflicts with `{rec['base']}`. "
-                              f"Merge `origin/{rec['base']}`, resolve the conflicts, commit and push.", head)
+                              f"Merge `origin/{rec['base']}`, resolve the conflicts, commit and push.", head,
+                         why=f"o GitHub aponta conflito entre o PR e o `{rec['base']}`.")
     if DEMO.get("enabled") and rec.get("demo_head") != head:
         if not demo_busy():
             return start_demo(rec, head, "final")
         if not rec.get("demo_wait_noticed"):
             rec["demo_wait_noticed"] = True
-            notify(rec, "Approved. The demo starts when the running one finishes.")
+            notify(rec, "⏳ *Demo na fila*: outra demo está gravando agora. Esta começa assim que ela terminar.")
         return
     demo = next((d for d in reversed(rec.get("demos", [])) if d["head"] == head), None)
     if mutate(f"mark PR #{rec['pr_number']} ready"):
         run(["gh", "pr", "ready", str(rec["pr_number"])], cwd=rec["worktree"])
     set_status(rec, "review")
     rec["stage"] = "review"
-    comment(rec, f"the-judge approved the head commit ({rec['last_review']}). "
-                 f"The pull request is ready for review: {rec['pr_url']}"
-                 + (f"\n\nDemo for your approval: {demo['linear']}" if demo else ""))
-    notify(rec, f"the-judge: APPROVE. <{rec['pr_url']}|PR #{rec['pr_number']}> is ready for your review."
-                + (f" Demo: <{demo['linear']}|Linear> · <{demo['github']}|PR comment>." if demo else ""), human=True)
+    pr_link = f"PR #{rec['pr_number']}"
+    comment(rec, "👀 **Ready for your review**\n\n"
+                 f"✅ the-judge approved the head commit: [review]({rec['last_review']})\n\n"
+                 + (f"🎬 Demo for your approval: [watch it]({demo['linear']})\n\n" if demo else "")
+                 + f"🔗 Pull request: [{pr_link}]({rec['pr_url']})\n\n"
+                 + ("Approve the feature from the demo, then review the pull request." if demo
+                    else "Review the pull request.") + " Merging is up to you.")
+    notify(rec, f"🎉 *Pronto para sua revisão!* A Judge aprovou o <{rec['pr_url']}|{pr_link}>."
+                + (f"\n🎬 Demo: <{demo['linear']}|▶️ assistir no Linear> · <{demo['github']}|🖼️ ver no PR>"
+                   if demo else "")
+                + ("\n👉 Aprove a feature pela demo e revise o PR." if demo else "\n👉 Revise o PR.")
+                + " O merge é com você.", human=True)
 
 
 def wait_ci(rec, head, then):
@@ -936,7 +1066,8 @@ def check_ci(rec):
         rec["ci_head"], rec["ci_since"] = head, now()
     checks = pr_checks(rec, head)
     if checks["fail"]:
-        return start_fix(rec, "CI failing on the head commit: " + ", ".join(checks["fail"]), head)
+        return start_fix(rec, "CI failing on the head commit: " + ", ".join(checks["fail"]), head,
+                         why="o CI falhou em " + ", ".join(checks["fail"]) + ".")
     if checks["pending"]:
         return
     if not checks["pass"]:
@@ -955,11 +1086,16 @@ def after_verify(rec, result):
     if git("log", "-1", "--format=%H", "--", verified, cwd=rec["worktree"]) != head:
         raise Stop(f"`{verified}` is not the last commit, so it does not verify the head.")
     report = (Path(rec["worktree"]) / verified).read_text()
+    report_link = f"<{blob(head, verified)}|📄 Relatório>"
     if re.search(r"\*\*Verdict\*\*:\s*PASS", report):
-        notify(rec, f"Verify: PASS (`{verified}`).")
+        notify(rec, f"✅ *Verify passou*: todas as provas do checklist conferem. {report_link}")
         return start_judge(rec, head)
-    notify(rec, f"Verify: FAIL (`{verified}`).")
-    start_fix(rec, f"The Verifier returned FAIL. Read `{verified}` for the failing checks.", head)
+    notify(rec, f"❌ *Verify reprovou*: algumas provas não conferem. {report_link}")
+    start_fix(rec, f"The Verifier returned FAIL. Read `{verified}` for the failing checks.", head,
+              why="corrige as provas que o Verify reprovou, a partir do relatório.")
+
+
+JUDGE_SAYS = {"REQUEST_CHANGES": ("✋", "pediu mudanças"), "COMMENT": ("💬", "deixou comentários")}
 
 
 def after_judge(rec, result):
@@ -967,8 +1103,11 @@ def after_judge(rec, result):
     verdict, url = judge_verdict(rec, head)
     rec["last_review"] = url
     if verdict != "APPROVE":
-        notify(rec, f"the-judge: {verdict} (<{url}|review>).")
-        return start_fix(rec, f"the-judge returned {verdict}. Address the review at {url}.", head)
+        emoji, says = JUDGE_SAYS.get(verdict, ("💬", f"respondeu {verdict}"))
+        notify(rec, f"{emoji} *Judge {says}*. <{url}|📝 Ver a revisão>")
+        return start_fix(rec, f"the-judge returned {verdict}. Address the review at {url}.", head,
+                         why=f"responde à <{url}|revisão> da Judge.")
+    notify(rec, f"✅ *Judge aprovou*. <{url}|📝 Ver a revisão>")
     rec["stage"] = "final"
     check_final(rec)
 
@@ -977,7 +1116,7 @@ def after_fix(rec, result):
     head = require_clean_and_pushed(rec)
     if head == rec.get("fix_from"):
         raise Stop("The fix station finished without a new commit.")
-    notify(rec, f"Fix round {rec['round']} pushed `{head[:8]}`.")
+    notify(rec, f"📤 *Correção {rec['round']} enviada* (`{head[:8]}`): CI, Verify e Judge rodam de novo.")
     sync_then_ci(rec, head)
 
 
@@ -1036,7 +1175,7 @@ def start_mention(state, m):
         "conversation_id": out["id"], "channel": m["channel"], "thread": m["thread"],
         "status": "active", "events_mark": 0, "since": time.time()}
     slack("chat.postMessage", channel=m["channel"], thread_ts=m["thread"],
-          text=f"On it. <{CONFIG['canvas_public_url']}/conversations/{out['id']}|View progress>")
+          text=f"👀 Deixa comigo! <{CONFIG['canvas_public_url']}/conversations/{out['id']}|Acompanhar ao vivo>")
 
 
 def follow_up_mention(rec, m):
@@ -1065,10 +1204,10 @@ def finish_mention(rec):
         return
     final = canvas("GET", f"/api/conversations/{rec['conversation_id']}/agent_final_response").get("response", "")
     if status in ("error", "stuck"):
-        final = f"The agent stopped with status *{status}*." + (f"\n\n{final}" if final else "")
+        final = f"🛑 O agente parou com status *{status}*." + (f"\n\n{final}" if final else "")
     if mutate(f"post the mention answer in {rec['channel']}/{rec['thread']}"):
         slack("chat.postMessage", channel=rec["channel"], thread_ts=rec["thread"],
-              text=(final or "Done, with no message.")[:39000])
+              text=(final or "✅ Feito, sem mensagem final.")[:39000])
     rec["status"] = "answered"
 
 
@@ -1099,10 +1238,12 @@ def stop_for_human(rec, question):
     rec["waiting_stage"] = rec["stage"] if rec["stage"] != "waiting" else rec.get("waiting_stage")
     rec["stage"] = "waiting"
     rec["waiting_since"] = now()
-    notify(rec, f"Needs you at *{rec['waiting_stage']}*: {question}\nReply in this thread or on the Linear issue.",
-           human=True)
+    where = badge(rec["waiting_stage"])
+    notify(rec, f"🙋 *Preciso de você* no {where}\n{quote(esc(question))}\n"
+                "💬 Responda aqui na thread ou na issue do Linear.", human=True)
     set_needs_human(rec, True)
-    comment(rec, f"Stopped at {rec['waiting_stage']}. {question}\n\nReply in the Slack thread or here.")
+    comment(rec, f"🙋 **Needs you at {where}**\n\n{quote(question)}\n\n"
+                 "Reply here or in the Slack thread, and the station picks it up.")
 
 
 def linear_replies(rec):
@@ -1128,7 +1269,7 @@ def deliver_replies(rec):
             rec.pop("waiting_stage", None)
             rec["stage"] = "blocked"
             set_needs_human(rec, False)
-            notify(rec, "Got your answer. Checking the issue again.")
+            notify(rec, "📨 *Recebi sua resposta*: vou conferir a issue de novo.")
         return
     for reply in replies:
         send_to_conversation(rec, render("answer.md", source=reply["source"], answer=reply["text"],
@@ -1141,7 +1282,7 @@ def deliver_replies(rec):
             rec["round"] = MAX_ROUNDS - 1
         rec.pop("base_syncs", None)
         set_needs_human(rec, False)
-    notify(rec, f"Got your answer. {rec['stage'].capitalize()} continues.")
+    notify(rec, f"📨 *Recebi sua resposta*: o {badge(rec['stage'])} continua.")
 
 
 def advance(rec):
@@ -1171,12 +1312,14 @@ def new_record(issue):
     return rec
 
 
-def refuse(rec, why):
+def refuse(rec, why, why_pt):
     """An issue the factory cannot take; the person fixes the description and removes the label to retry."""
-    notify(rec, f"Cannot start: {why} Fix the description and remove `{CONFIG['needs_human_label']}` to retry.",
-           human=True)
+    label = CONFIG["needs_human_label"]
+    rec["stage"] = "refused"
+    notify(rec, f"⛔ *Não consigo começar*: {esc(why_pt)}\n"
+                f"👉 Corrija a descrição e remova a label `{label}` para tentar de novo.", human=True)
     set_needs_human(rec, True)
-    comment(rec, f"Cannot start: {why}")
+    comment(rec, f"⛔ **Can't start yet:** {why}\n\nFix the description, then remove the `{label}` label to retry.")
 
 
 def begin(rec, issue=None):
@@ -1185,14 +1328,15 @@ def begin(rec, issue=None):
     labels = {l["name"] for l in issue["labels"]["nodes"]}
     if issue["state"]["name"] != CONFIG["states"]["ready"] or CONFIG["label"] not in labels:
         rec["stage"] = "dropped"
-        notify(rec, f"Left the factory: the issue is no longer {CONFIG['states']['ready']} with `{CONFIG['label']}`.")
+        notify(rec, f"🚪 *Saiu da factory*: a issue não está mais em {CONFIG['states']['ready']} "
+                    f"com a label `{CONFIG['label']}`.")
         return False
     reasons = open_blockers(issue)
     if reasons:
         rec["stage"] = "blocked"
         if rec.get("blocked_on") != reasons:
             rec["blocked_on"] = reasons
-            notify(rec, "Waiting on " + ", ".join(reasons) + ". Starts when they are Done or merged.")
+            notify(rec, "🚧 *Esperando*: " + ", ".join(reasons) + ". Começa sozinha quando estiverem Done ou com merge.")
         return False
     if not mutate(f"start {rec['identifier']} on `{rec['branch']}` from `{rec['base']}`"):
         return False
@@ -1206,7 +1350,7 @@ def begin(rec, issue=None):
             rec["stage"] = "plan"
             raise Stop(f"`{task}` has blocking Unresolved questions:\n" + "\n".join(f"- {q}" for q in blocks))
         rec["tasks_file"] = task
-        notify(rec, f"Plan skipped: `{task}` is already planned on `{rec['base']}`.")
+        notify(rec, f"⏭️ *Plan pulado*: `{task}` já está planejado no `{rec['base']}`.")
         start_build(rec)
     else:
         start_plan(rec)
@@ -1221,15 +1365,17 @@ def pickup(state):
             continue
         rec = new_record(issue)
         if not rec.get("feature"):
-            refuse(rec, "the description must name the feature folder as `.specs/features/<feature>/`.")
+            refuse(rec, "the description must name the feature folder as `.specs/features/<feature>/`.",
+                   "a descrição precisa citar a pasta da feature, como `.specs/features/<feature>/`.")
             continue
         if rec["branch"] == rec["base"] or rec["branch"] in ("main", "master"):
-            refuse(rec, f"`Branch:` `{rec['branch']}` is the base. Name a branch of its own.")
+            refuse(rec, f"`Branch:` `{rec['branch']}` is the base. Name a branch of its own.",
+                   f"a `Branch:` `{rec['branch']}` é a própria base. Use uma branch só desta issue.")
             continue
         if not mutate(f"pick up {issue['identifier']} ({rec['branch']} from {rec['base']})"):
             continue
         state["issues"][issue["identifier"]] = rec
-        notify(rec, f"Picked up. Base `{rec['base']}`, branch `{rec['branch']}`, worktree `{rec['worktree']}`.")
+        notify(rec, f"📥 *Entrou na factory*: parte do `{rec['base']}` na branch `{rec['branch']}`.")
 
 
 def active_count(state):
@@ -1247,8 +1393,8 @@ def fill_slots(state):
                 position += 1
                 if not rec.get("queue_noticed"):
                     rec["queue_noticed"] = True
-                    notify(rec, f"Queued, position {position}. {CONFIG['max_active']} issues are running; "
-                                "this one starts when a slot frees.")
+                    notify(rec, f"⏳ *Na fila*: posição {position}. Já há {CONFIG['max_active']} issues rodando; "
+                                "esta começa quando uma vaga abrir.")
             continue
         try:
             begin(rec)

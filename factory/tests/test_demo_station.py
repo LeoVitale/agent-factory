@@ -91,7 +91,7 @@ rec = {"identifier": "HES-1", "pr_number": 7, "pr_url": "https://github.com/o/r/
        "checklist": ".specs/features/visual-refresh/checks/01-x.md"}
 gh_md = f.demo_markdown(rec, m, lambda n, raw=True: f"https://x/{n}" + ("?raw=true" if raw else ""), "github", "Videos: L")
 li_md = f.demo_markdown(rec, m, lambda n, raw=True: f"https://u/{n}", "linear")
-check("github: before/after table with 3 columns", "| Design | Before | After |" in gh_md)
+check("github: before/after table with 3 columns", "| 🎨 Design | ⬅️ Before | ✨ After |" in gh_md)
 check("github: new screen marked", "_new screen_" in gh_md)
 check("github: gif inline + mp4 link", "![Filter by cleaner](https://x/filter.gif?raw=true)" in gh_md and "(https://x/filter.mp4)" in gh_md)
 check("linear: mp4 embedded, no gif", "![Filter by cleaner](https://u/filter.mp4)" in li_md and "filter.gif" not in li_md)
@@ -142,7 +142,7 @@ calls = []
 f.notify = lambda r, t, human=False: calls.append(("notify", t))
 f.comment = lambda r, b: calls.append(("comment", b)) or "https://linear.app/c/1"
 f.issue_detail = lambda i: {"identifier": "HES-1", "title": "t", "url": "u", "description": "d", "comments": {"nodes": []}}
-f.start_station = lambda r, st, prompt: (r.update(stage=st, conversation_id="conv"), calls.append(("start", st, prompt)))
+f.start_station = lambda r, st, prompt, **k: (r.update(stage=st, conversation_id="conv"), calls.append(("start", st, prompt)))
 f.set_status = lambda r, k: calls.append(("status", k))
 head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone, capture_output=True, text=True).stdout.strip()
 f.require_clean_and_pushed = lambda r: head
