@@ -152,7 +152,7 @@ Só as suas mensagens contam: o `SLACK_PERSON_ID` no Slack e o dono da chave no 
 ## 9. Slack
 
 - **Canal por projeto:** `#hestia-<projeto>`, por exemplo `#hestia-visual-refresh`, criado pelo bot, que te convida. Issues sem projeto vão para `#hestia-factory`. Para usar um canal que já existe, mapeie em `slack.project_channels`.
-- **Thread por issue:** a mensagem-raiz mostra a issue, a etapa, o PR e a rodada, e é editada a cada mudança. Cada etapa vira uma resposta com o link da conversa no Canvas.
+- **Thread por issue:** a mensagem-raiz mostra a issue, a etapa, o PR e a rodada, e é editada a cada mudança. Cada etapa vira uma resposta com o link da conversa no Canvas. A thread nasce quando a issue entra na fila e pode ficar horas parada, então o início da primeira etapa vai também para o canal, sem te mencionar.
 - **Menções avulsas:** uma menção ao bot no `#visual-refresh` (`mentions.channels`) abre uma conversa Cursor-ACP fora do fluxo de issues. A fábrica reage com 👀, posta o link e depois a resposta final. Menções seguintes na mesma thread vão para a mesma conversa. Regras fixas: o agente não posta no Slack e só lê o Linear. Isso substituiu a automação "Slack Channel Monitor", que está pausada no Canvas.
 - **Pré-requisitos do app:** Socket Mode ligado, evento `message.channels` assinado, Save Changes e reinstalação do app no workspace.
 

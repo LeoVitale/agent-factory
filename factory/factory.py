@@ -400,8 +400,9 @@ def root_text(rec):
             f"{pipeline(rec)}\n" + " · ".join(facts))
 
 
-def notify(rec, text, human=False):
-    """Post a station update in the issue thread. A stop for the person mentions them and reaches the channel."""
+def notify(rec, text, human=False, broadcast=False):
+    """Post a station update in the issue thread. A stop for the person mentions them and reaches the channel;
+    `broadcast` sends the reply to the channel too, without the mention."""
     log.info("%s: %s", rec["identifier"], text)
     if not SLACK_BOT or not mutate(f"Slack: {text[:80]}"):
         return
@@ -412,7 +413,7 @@ def notify(rec, text, human=False):
         if human and SLACK_PERSON:
             text = f"<@{SLACK_PERSON}> {text}"
         slack("chat.postMessage", channel=rec["slack_channel"], thread_ts=rec["slack_ts"],
-              text=text, reply_broadcast=human)
+              text=text, reply_broadcast=human or broadcast)
         slack("chat.update", channel=rec["slack_channel"], ts=rec["slack_ts"], text=root_text(rec))
     except Exception:
         log.error("Slack failed for %s:\n%s", rec["identifier"], traceback.format_exc())
@@ -485,6 +486,7 @@ STARTS = {
 def start_station(rec, station, prompt, title=None, detail=None):
     """`title` and `detail` replace the station's usual Slack line, for a fix round or a handoff."""
     rec["stage"] = station
+    first = not rec.get("conversations")
     if not mutate(f"start {station} conversation for {rec['identifier']}"):
         return
     profile = CONFIG.get("station_profiles", {}).get(station, CONFIG["agent_profile_id"])
@@ -501,8 +503,9 @@ def start_station(rec, station, prompt, title=None, detail=None):
     rec["station_started_at"] = now()
     rec.setdefault("conversations", []).append({"station": station, "id": out["id"], "at": now(), "profile": profile})
     emoji, name = LOOK[station]
+    # The thread may have been opened long ago, while the issue waited; the first station also reaches the channel.
     notify(rec, f"{emoji} *{title or name + ' começou'}*: {detail or STARTS[station]}\n"
-                f"<{CONFIG['canvas_public_url']}/conversations/{out['id']}|👀 Acompanhar ao vivo>")
+                f"<{CONFIG['canvas_public_url']}/conversations/{out['id']}|👀 Acompanhar ao vivo>", broadcast=first)
 
 
 def send_to_conversation(rec, text):

@@ -65,7 +65,7 @@ check("root: who it waits for", root.splitlines()[2].startswith("🙋 Esperando 
 
 # ── station updates ──
 msgs, posts, linear_calls = [], [], []
-f.notify = lambda r, t, human=False: msgs.append((t, human))
+f.notify = lambda r, t, human=False, broadcast=False: msgs.append((t, human))
 f.canvas = lambda method, path, body=None: posts.append(body) or {"id": f"c{len(posts)}"}
 f.linear = lambda q, **v: linear_calls.append(v) or {"commentCreate": {"comment": {"url": "https://linear.app/c/1"}}}
 f.set_needs_human = lambda r, on: None
