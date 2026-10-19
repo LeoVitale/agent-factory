@@ -148,6 +148,7 @@ head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone, capture_output=Tr
 f.require_clean_and_pushed = lambda r: head
 f.base_is_merged = lambda r: True
 f.gh_json = lambda *a, **k: {"mergeable": "MERGEABLE", "headRefOid": head}
+f.pr_checks = lambda r, h: {"pass": ["PR checks"], "fail": [], "pending": []}
 real_run = f.run
 f.run = lambda args, **k: calls.append(("run", args)) if args[:2] == ["gh", "pr"] else real_run(args, **k)
 state = {"issues": {"HES-1": dict(rec, stage="final", last_review="https://r", round=1)}}

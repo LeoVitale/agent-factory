@@ -445,7 +445,7 @@ def start_socket_mode(state):
         with LOCK:
             for rec in state["issues"].values():
                 if thread and rec.get("slack_channel") == channel and rec.get("slack_ts") == thread:
-                    rec.setdefault("inbox", []).append({"source": "Slack", "text": text})
+                    rec.setdefault("inbox", []).append({"source": "Slack", "text": text.replace(mention, "").strip(" :")})
                     save_state(state)
                     WAKE.set()
                     return
@@ -1013,7 +1013,7 @@ def sync_then_ci(rec, head):
 
 
 def check_final(rec):
-    """Before In review: the branch holds the current base and GitHub can merge the pull request."""
+    """Before In review: the branch holds the current base, GitHub can merge the pull request and CI is green on the head."""
     head = require_clean_and_pushed(rec)
     if not base_is_merged(rec):
         rec["base_syncs"] = rec.get("base_syncs", 0) + 1
@@ -1030,6 +1030,20 @@ def check_final(rec):
         return start_fix(rec, f"GitHub reports that the pull request conflicts with `{rec['base']}`. "
                               f"Merge `origin/{rec['base']}`, resolve the conflicts, commit and push.", head,
                          why=f"o GitHub aponta conflito entre o PR e o `{rec['base']}`.")
+    checks = pr_checks(rec, head)
+    if checks["fail"]:
+        rec.pop("final_ci_since", None)
+        return start_fix(rec, "CI failing on the head commit: " + ", ".join(checks["fail"]), head,
+                         why="o CI falhou em " + ", ".join(checks["fail"]) + " no commit final.")
+    if checks["pending"]:
+        return
+    if not checks["pass"]:
+        since = rec.setdefault("final_ci_since", now())
+        if time.time() - datetime.fromisoformat(since).timestamp() >= CONFIG["no_checks_timeout_seconds"]:
+            rec.pop("final_ci_since", None)
+            raise Stop("No CI checks reported on the head commit.")
+        return
+    rec.pop("final_ci_since", None)
     if DEMO.get("enabled") and rec.get("demo_head") != head:
         if not demo_busy():
             return start_demo(rec, head, "final")
@@ -1285,6 +1299,35 @@ def deliver_replies(rec):
     notify(rec, f"📨 *Recebi sua resposta*: o {badge(rec['stage'])} continua.")
 
 
+def reopen_from_review(rec):
+    """A message from the person in the thread of an issue in review asks for a change: one more Fix round."""
+    requests = rec.pop("inbox", [])
+    if not requests:
+        return
+    pr = gh_json("pr", "view", str(rec["pr_number"]), "--json", "state", cwd=rec["worktree"])
+    if pr["state"] != "OPEN":
+        notify(rec, f"🚪 *Não reabro*: o <{rec['pr_url']}|PR #{rec['pr_number']}> está "
+                    f"{'com merge' if pr['state'] == 'MERGED' else 'fechado'}. Abra uma issue nova para a mudança.")
+        return
+    head = require_clean_and_pushed(rec)
+    request = "\n\n".join(re.sub(r"<@\w+>\s*", "", r["text"]).strip(" :") for r in requests)
+    if not mutate(f"reopen {rec['identifier']} from review for a Fix round"):
+        return
+    run(["gh", "pr", "ready", str(rec["pr_number"]), "--undo"], cwd=rec["worktree"])
+    set_status(rec, "progress")
+    for key in ("rounds_exhausted", "base_syncs", "review_checks", "final_ci_since"):
+        rec.pop(key, None)
+    rec["round"] = 0
+    notify(rec, f"📝 *Pedido recebido na revisão*: o <{rec['pr_url']}|PR #{rec['pr_number']}> volta para "
+                "rascunho, a issue volta para In Progress e uma rodada de Fix começa com o seu pedido.")
+    start_fix(rec, "The person asked for this change while the pull request was in review (via Slack):\n\n"
+                   + quote(request) + "\n\n"
+                   f"First, add a comment on Linear issue {rec['identifier']} with this request translated to "
+                   "English. Start the comment with `[factory] 📝 Change requested in review (via Slack):`. "
+                   "Use the Linear MCP. Then make the change.", head,
+              why="faz o que você pediu aqui na thread.")
+
+
 def advance(rec):
     deliver_replies(rec)
     if rec["stage"] == "ci":
@@ -1424,6 +1467,14 @@ def tick(state):
                 deliver_replies(rec)
             except Exception:
                 log.error("%s reply failed:\n%s", rec["identifier"], traceback.format_exc())
+        for rec in [r for r in state["issues"].values() if r["stage"] == "review" and r.get("inbox")]:
+            try:
+                reopen_from_review(rec)
+            except Stop as stop:
+                stop_for_human(rec, str(stop))
+            except Exception:
+                log.error("%s reopen failed:\n%s", rec["identifier"], traceback.format_exc())
+            save_state(state)
         for rec in (r for r in state["issues"].values() if r["stage"] == "review" and r.get("review_checks", 0) < 3):
             try:
                 keep_in_review(rec)
