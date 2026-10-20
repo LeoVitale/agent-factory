@@ -3,7 +3,7 @@
   "agent_kind": "acp",
   "id": "8c87a39a-3a52-4b7f-bbea-53d5fc95c96c",
   "name": "Cursor-ACP-medium",
-  "revision": 1,
+  "revision": 9,
   "mcp_server_refs": null,
   "secret_refs": null,
   "acp_server": "custom",
