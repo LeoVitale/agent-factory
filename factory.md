@@ -130,7 +130,7 @@ A fábrica para (etapa `waiting`) quando:
 - o tasks file tem `Unresolved` do tipo `blocks`;
 - o branch não foi enviado, a árvore ficou suja ou falta um artefato;
 - a mudança toca schema ou RLS e o `test:rls` não pôde rodar;
-- 3 rodadas de Fix terminam sem APPROVE;
+- 3 rodadas de Fix terminam sem APPROVE. Se a última falha foi um Verify FAIL, sua resposta abre direto mais uma rodada de Fix, com a resposta no prompt, em vez de voltar à conversa do Verify, que só verificaria o mesmo commit de novo. Cada resposta vale uma rodada. Quando as rodadas acabam pela Judge ou pelo CI, a resposta ainda volta para a última conversa;
 - a conversa termina em `error` ou `stuck`, ou fica esperando confirmação;
 - a base anda depois da revisão mais de 3 vezes;
 - a estação termina sem a linha `FACTORY_RESULT`. A exceção é quando a última linha da resposta traz um `RetriableError` do Cursor, por exemplo `PING timed out`. Nesse caso a fábrica avisa na thread e abre uma conversa nova da mesma estação, com o prompt original e uma nota de que a anterior caiu. A conversa nova sobe um processo novo do Cursor. Isso acontece até 2 vezes por estação, não conta como rodada de Fix, e a fábrica só para na terceira queda. Continuar na mesma conversa não resolve: ela reusa o processo do Cursor cuja conexão travou (HES-114, 20/10: quatro tentativas seguidas caíram em 30 s com `Connection stalled`).

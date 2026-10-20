@@ -1328,10 +1328,33 @@ def linear_replies(rec):
     return out
 
 
+def fix_after_answer(rec, replies):
+    """Fix rounds ran out on a Verify FAIL. The answer opens one more Fix round, because the finished Verify
+    conversation would only verify the same head again."""
+    try:
+        head = require_clean_and_pushed(rec)
+    except Stop as stop:
+        return stop_for_human(rec, str(stop))
+    answers = "\n\n".join(f"The person answered through {r['source']}:\n\n{quote(r['text'])}" for r in replies)
+    reason = (f"The Verifier returned FAIL. Read `{paths(rec)['verified']}` for the failing checks. The factory "
+              f"stopped after {MAX_ROUNDS} fix rounds, and the person answered.\n\n{answers}\n\n"
+              f"First, add a comment on Linear issue {rec['identifier']} with this answer translated to English. "
+              f"Start the comment with `[factory] 📨 Answer from the person (via {replies[0]['source']}):`. "
+              "Use the Linear MCP. Then fix what failed, following the answer.")
+    for key in ("waiting_stage", "question", "rounds_exhausted", "base_syncs"):
+        rec.pop(key, None)
+    rec["round"] = MAX_ROUNDS - 1
+    set_needs_human(rec, False)
+    notify(rec, "📨 *Recebi sua resposta*: abro mais uma rodada de 🔧 Fix com ela, sem voltar ao Verify.")
+    start_fix(rec, reason, head, why="corrige o que o Verify reprovou, seguindo a sua resposta.")
+
+
 def deliver_replies(rec):
     replies = rec.pop("inbox", []) + linear_replies(rec)
     if not replies:
         return
+    if rec["stage"] == "waiting" and rec.get("waiting_stage") == "verify" and rec.get("rounds_exhausted"):
+        return fix_after_answer(rec, replies)
     if not rec.get("conversation_id"):
         # A stop before any conversation (a base or tasks file problem): the answer means "check again".
         if rec["stage"] == "waiting":
