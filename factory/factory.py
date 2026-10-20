@@ -313,12 +313,12 @@ def plural(n, one, many):
 
 def pipeline(rec):
     """The progress line of the thread root: done steps ticked, the current one bold, the rest grey."""
-    steps = ["plan", "build"] + (["fix"] if rec.get("round") else []) + ["ci", "verify", "judge"]
+    steps = ["plan", "build"] + (["fix"] if rec.get("round") else []) + ["verify", "judge", "ci"]
     steps += (["demo"] if DEMO.get("enabled") else []) + ["review"]
     stage = rec["stage"]
     at = rec.get("waiting_stage") if stage == "waiting" else stage
     if at == "final":
-        at = "demo" if DEMO.get("enabled") else "review"
+        at = "ci"
     pos = steps.index(at) if at in steps else -1
     planned = any(c["station"] == "plan" for c in rec.get("conversations", []))
     out = []
@@ -1005,11 +1005,11 @@ def after_build(rec, result):
         rec["schema_acknowledged"] = True
         raise Stop("This change touches schema or RLS (" + ", ".join(schema[:5]) + "), and `pnpm run test:rls` "
                    "cannot run in the sandbox. Run it locally and reply with the result.")
-    sync_then_ci(rec, head)
+    sync_then_verify(rec, head)
 
 
-def sync_then_ci(rec, head):
-    """Bring the latest base in before CI and Verify, so what gets verified and judged is current."""
+def sync_then_verify(rec, head):
+    """Bring the latest base in before Verify, so what gets verified and judged is current. CI waits for APPROVE."""
     try:
         head = sync_with_base(rec)
     except Conflict as conflict:
@@ -1019,7 +1019,7 @@ def sync_then_ci(rec, head):
                               "keeping the intent of both sides, run the affected proofs, commit and push.", head,
                          why=f"trazer o `{rec['base']}` mais recente conflita em "
                              + ", ".join(f"`{f}`" for f in files[:5]) + (" e outros" if len(files) > 5 else "") + ".")
-    wait_ci(rec, head, then="verify")
+    start_verify(rec, head)
 
 
 def check_final(rec):
@@ -1032,7 +1032,7 @@ def check_final(rec):
                        "Reply to merge it once more and run Verify and Judge again.")
         notify(rec, f"🔄 *O `{rec['base']}` andou depois da revisão*: vou trazer as mudanças, "
                     "e Verify e Judge rodam de novo.")
-        return sync_then_ci(rec, head)
+        return sync_then_verify(rec, head)
     pr = gh_json("pr", "view", str(rec["pr_number"]), "--json", "mergeable,headRefOid", cwd=rec["worktree"])
     if pr["headRefOid"] != head or pr["mergeable"] == "UNKNOWN":
         return
@@ -1080,29 +1080,6 @@ def check_final(rec):
                 + " O merge é com você.", human=True)
 
 
-def wait_ci(rec, head, then):
-    rec.update(stage="ci", ci_head=head, ci_then=then, ci_since=now())
-
-
-def check_ci(rec):
-    head = require_clean_and_pushed(rec)
-    if head != rec["ci_head"]:
-        rec["ci_head"], rec["ci_since"] = head, now()
-    checks = pr_checks(rec, head)
-    if checks["fail"]:
-        return start_fix(rec, "CI failing on the head commit: " + ", ".join(checks["fail"]), head,
-                         why="o CI falhou em " + ", ".join(checks["fail"]) + ".")
-    if checks["pending"]:
-        return
-    if not checks["pass"]:
-        waited = time.time() - datetime.fromisoformat(rec["ci_since"]).timestamp()
-        if waited < CONFIG["no_checks_timeout_seconds"]:
-            return
-        raise Stop("No CI checks reported on the head commit.")
-    if rec["ci_then"] == "verify":
-        start_verify(rec, head)
-
-
 def after_verify(rec, result):
     head = require_clean_and_pushed(rec)
     verified = paths(rec)["verified"]
@@ -1131,7 +1108,8 @@ def after_judge(rec, result):
         notify(rec, f"{emoji} *Judge {says}*. <{url}|📝 Ver a revisão>")
         return start_fix(rec, f"the-judge returned {verdict}. Address the review at {url}.", head,
                          why=f"responde à <{url}|revisão> da Judge.")
-    notify(rec, f"✅ *Judge aprovou*. <{url}|📝 Ver a revisão>")
+    notify(rec, f"✅ *Judge aprovou*. <{url}|📝 Ver a revisão>\n🚦 Agora confiro o CI do commit aprovado"
+                + (", e depois vem a Demo." if DEMO.get("enabled") else "."))
     rec["stage"] = "final"
     check_final(rec)
 
@@ -1140,8 +1118,8 @@ def after_fix(rec, result):
     head = require_clean_and_pushed(rec)
     if head == rec.get("fix_from"):
         raise Stop("The fix station finished without a new commit.")
-    notify(rec, f"📤 *Correção {rec['round']} enviada* (`{head[:8]}`): CI, Verify e Judge rodam de novo.")
-    sync_then_ci(rec, head)
+    notify(rec, f"📤 *Correção {rec['round']} enviada* (`{head[:8]}`): Verify e Judge rodam de novo, e o CI roda depois do APPROVE.")
+    sync_then_verify(rec, head)
 
 
 AFTER = {"plan": after_plan, "build": after_build, "verify": after_verify, "judge": after_judge, "fix": after_fix,
@@ -1342,7 +1320,8 @@ def reopen_from_review(rec):
 def advance(rec):
     deliver_replies(rec)
     if rec["stage"] == "ci":
-        return check_ci(rec)
+        # A record saved before CI moved after the Judge: go straight to Verify.
+        return start_verify(rec, require_clean_and_pushed(rec))
     if rec["stage"] == "final":
         return check_final(rec)
     if rec["stage"] in STATIONS and rec.get("conversation_id"):

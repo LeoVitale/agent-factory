@@ -165,12 +165,12 @@ def minutes(start, end):
 
 def steps(rec):
     """The same progress line the Slack thread root shows."""
-    keys = ["plan", "build"] + (["fix"] if rec.get("round") else []) + ["ci", "verify", "judge"]
+    keys = ["plan", "build"] + (["fix"] if rec.get("round") else []) + ["verify", "judge", "ci"]
     keys += (["demo"] if DEMO_ON else []) + ["review"]
     stage = rec["stage"]
     at = rec.get("waiting_stage") if stage == "waiting" else stage
     if at == "final":
-        at = "demo" if DEMO_ON else "review"
+        at = "ci"
     pos = keys.index(at) if at in keys else -1
     if stage in ("queued", "blocked", "refused"):
         pos = 0
