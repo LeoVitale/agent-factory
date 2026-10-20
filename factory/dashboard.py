@@ -251,7 +251,8 @@ def metrics(issues, convs):
     per_station = {s: {"runs": 0, "events": 0, "minutes": []} for s in STATIONS}
     rows = []
     for rec in issues:
-        order = [c["station"] for c in rec.get("conversations", [])]
+        # A retry reruns the same station after a Cursor connection drop, so it is not a step of its own.
+        order = [c["station"] for c in rec.get("conversations", []) if not c.get("retry")]
         if not order:
             continue
         for c in rec["conversations"]:
@@ -268,7 +269,7 @@ def metrics(issues, convs):
             ready = demo["at"] if demo else last.get("updated_at")
         rows.append({
             "id": rec["identifier"], "url": rec["issue_url"], "stage": LABELS.get(rec["stage"], rec["stage"]),
-            "conversations": len(order), "fix_rounds": order.count("fix"),
+            "conversations": len(rec["conversations"]), "fix_rounds": order.count("fix"),
             "events": sum(convs.get(c["id"], {}).get("events") or 0 for c in rec["conversations"]),
             "verify_first": first_pass(order, "verify"), "judge_first": first_pass(order, "judge"),
             "minutes_to_review": minutes(rec["conversations"][0]["at"], ready) if ready else None,

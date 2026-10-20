@@ -12,6 +12,9 @@ issue (Socket Mode) and through Linear comments. No LLM runs here.
 
 Record the demo of a pull request already in review:
   touch <state dir>/requests/demo-HES-104
+
+Run the station an issue stopped at again, in a new conversation:
+  touch <state dir>/requests/retry-HES-114
 """
 import json
 import logging
@@ -45,6 +48,10 @@ DRY_RUN = os.environ.get("FACTORY_DRY_RUN") == "1"
 REPO = CONFIG["repo_path"]
 WORKTREES = Path(CONFIG["worktrees_path"])
 MAX_ROUNDS = CONFIG["max_fix_rounds"]
+MAX_RETRIES = 2
+RETRY_NOTE = ("A previous conversation for this station stopped with a connection error from Cursor (RetriableError) "
+              "before it finished. Its work may already be in this working tree: check `git status` and `git log` "
+              "first, keep what it did, and continue from there. The job is unchanged:\n\n---\n\n")
 STATIONS = ("plan", "build", "verify", "judge", "fix", "demo")
 DONE_STAGES = ("review", "dropped")
 FACTORY_MARK = "[factory]"
@@ -490,8 +497,9 @@ STARTS = {
 }
 
 
-def start_station(rec, station, prompt, title=None, detail=None):
-    """`title` and `detail` replace the station's usual Slack line, for a fix round or a handoff."""
+def start_station(rec, station, prompt, title=None, detail=None, retry=False):
+    """`title` and `detail` replace the station's usual Slack line, for a fix round or a handoff. A `retry` runs the
+    same station again in a new conversation and keeps its original prompt and retry count."""
     rec["stage"] = station
     first = not rec.get("conversations")
     if not mutate(f"start {station} conversation for {rec['identifier']}"):
@@ -507,8 +515,12 @@ def start_station(rec, station, prompt, title=None, detail=None):
     })
     rec["conversation_id"] = out["id"]
     rec["events_mark"] = 0
+    if not retry:
+        rec["retries"] = 0
+        rec["prompt"] = prompt
     rec["station_started_at"] = now()
-    rec.setdefault("conversations", []).append({"station": station, "id": out["id"], "at": now(), "profile": profile})
+    rec.setdefault("conversations", []).append({"station": station, "id": out["id"], "at": now(), "profile": profile,
+                                                **({"retry": True} if retry else {})})
     emoji, name = LOOK[station]
     # The thread may have been opened long ago, while the issue waited; the first station also reaches the channel.
     notify(rec, f"{emoji} *{title or name + ' começou'}*: {detail or STARTS[station]}\n"
@@ -521,6 +533,43 @@ def send_to_conversation(rec, text):
     rec["events_mark"] = event_count(rec["conversation_id"])
     canvas("POST", f"/api/conversations/{rec['conversation_id']}/events",
            {"role": "user", "content": [{"type": "text", "text": text}], "run": True})
+
+
+def station_prompt(rec):
+    """The prompt the station started with. A station started before the factory kept it reads it back from the Canvas."""
+    if rec.get("prompt"):
+        return rec["prompt"]
+    page = canvas("GET", f"/api/conversations/{rec['conversation_id']}/events/search?limit=10")
+    for event in page.get("items", []):
+        if event.get("kind") == "MessageEvent" and event.get("source") == "user":
+            return "".join(part.get("text", "") for part in event["llm_message"]["content"])
+    raise Stop("There is no station prompt to retry with.")
+
+
+def retry_station(rec, error=None):
+    """Cursor dropped its backend connection, and the same conversation keeps the broken process: run the station
+    again in a new conversation, which starts a new Cursor process. It is not a Fix round. Without `error`, the
+    person asked for it."""
+    rec["prompt"] = station_prompt(rec)
+    name = LOOK[rec["stage"]][1]
+    if error:
+        rec["retries"] = rec.get("retries", 0) + 1
+        detail = (f"a conversa anterior caiu por erro de conexão do Cursor (`{esc(error[:120])}`). Uma conversa nova, "
+                  f"com um processo novo do Cursor, segue com o mesmo pedido (tentativa {rec['retries']} de "
+                  f"{MAX_RETRIES}). Não conta como rodada de correção.")
+    else:
+        rec["retries"] = 0
+        detail = "a seu pedido, uma conversa nova, com um processo novo do Cursor, segue com o mesmo pedido."
+    start_station(rec, rec["stage"], RETRY_NOTE + rec["prompt"], title=f"{name} recomeçou", detail=detail, retry=True)
+    return None
+
+
+def resume_station(rec):
+    """`requests/retry-<ISSUE>`: run the station that stopped again, in a new conversation."""
+    rec["stage"] = rec.pop("waiting_stage")
+    rec.pop("question", None)
+    set_needs_human(rec, False)
+    retry_station(rec)
 
 
 def station_result(rec):
@@ -539,6 +588,9 @@ def station_result(rec):
     for match in re.finditer(r"FACTORY_RESULT:\s*(\{.*\})", text):
         pass
     if not match:
+        lines = text.strip().splitlines()
+        if lines and "RetriableError" in lines[-1] and rec.get("retries", 0) < MAX_RETRIES:
+            return retry_station(rec, lines[-1])
         raise Stop(f"The {name} station finished without a FACTORY_RESULT line.")
     try:
         return json.loads(match.group(1))
@@ -944,14 +996,28 @@ def after_demo(rec, result):
 
 
 def take_requests(state):
-    """A file `demo-<ISSUE>` in the requests folder records the demo of a pull request already in review."""
+    """A file `demo-<ISSUE>` in the requests folder records the demo of a pull request already in review;
+    `retry-<ISSUE>` runs the station an issue stopped at again, in a new conversation."""
     if not REQUESTS.is_dir():
         return
     for req in sorted(REQUESTS.iterdir(), key=lambda p: p.stat().st_mtime):
         kind, _, ident = req.name.partition("-")
         rec = state["issues"].get(ident)
+        if (kind == "retry" and rec and rec["stage"] == "waiting" and rec.get("waiting_stage") in STATIONS
+                and rec.get("conversation_id")):
+            if not mutate(f"retry the {rec['waiting_stage']} of {ident}"):
+                continue
+            req.unlink(missing_ok=True)
+            try:
+                resume_station(rec)
+            except Stop as stop:
+                stop_for_human(rec, str(stop))
+            except Exception:
+                log.error("%s retry request failed:\n%s", ident, traceback.format_exc())
+            save_state(state)
+            continue
         if kind != "demo" or not rec or rec["stage"] != "review" or not rec.get("pr_number"):
-            log.warning("ignoring request %s: no issue in review with that identifier", req.name)
+            log.warning("ignoring request %s: no issue that it applies to", req.name)
             if mutate(f"remove request {req.name}"):
                 req.unlink(missing_ok=True)
             continue

@@ -100,7 +100,7 @@ O ciclo principal roda a cada 2 minutos (`poll_seconds`), ou na hora quando cheg
 1. avança as issues ativas (lê o resultado da conversa e confere o portão);
 2. entrega respostas às issues paradas;
 3. reafirma In review nas issues entregues (veja a seção 10);
-4. atende pedidos de demo para PRs já em In review (`factory-state/requests/demo-<ISSUE>`);
+4. atende pedidos de demo para PRs já em In review (`factory-state/requests/demo-<ISSUE>`) e pedidos para refazer a estação de uma issue parada (`factory-state/requests/retry-<ISSUE>`);
 5. registra issues novas;
 6. preenche vagas livres da mais antiga para a mais nova, respeitando bloqueios;
 7. salva o estado.
@@ -132,7 +132,8 @@ A fábrica para (etapa `waiting`) quando:
 - a mudança toca schema ou RLS e o `test:rls` não pôde rodar;
 - 3 rodadas de Fix terminam sem APPROVE;
 - a conversa termina em `error` ou `stuck`, ou fica esperando confirmação;
-- a base anda depois da revisão mais de 3 vezes.
+- a base anda depois da revisão mais de 3 vezes;
+- a estação termina sem a linha `FACTORY_RESULT`. A exceção é quando a última linha da resposta traz um `RetriableError` do Cursor, por exemplo `PING timed out`. Nesse caso a fábrica avisa na thread e abre uma conversa nova da mesma estação, com o prompt original e uma nota de que a anterior caiu. A conversa nova sobe um processo novo do Cursor. Isso acontece até 2 vezes por estação, não conta como rodada de Fix, e a fábrica só para na terceira queda. Continuar na mesma conversa não resolve: ela reusa o processo do Cursor cuja conexão travou (HES-114, 20/10: quatro tentativas seguidas caíram em 30 s com `Connection stalled`).
 
 A ordem é sempre a mesma: **Slack primeiro**, com uma resposta na thread que menciona você e aparece também no canal. Depois vêm a label `factory:needs-human` e um comentário `[factory]` na issue.
 
@@ -237,6 +238,12 @@ Gravar a demo de um PR que já está em In review (ele volta para In review sem 
 
 ```bash
 touch ~/agent-sandbox/factory-state/requests/demo-HES-104
+```
+
+Refazer a estação em que uma issue parou, numa conversa nova (com um processo novo do Cursor e o mesmo prompt, sem contar como rodada de Fix). Responder na thread não serve para isso, porque a resposta vai para a conversa antiga:
+
+```bash
+touch ~/agent-sandbox/factory-state/requests/retry-HES-114
 ```
 
 Testes da etapa de demo, sem tocar em Linear, GitHub ou Slack:
