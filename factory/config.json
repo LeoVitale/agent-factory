@@ -46,9 +46,9 @@
   "station_profiles": {
     "plan": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
     "build": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
-    "verify": "8c87a39a-3a52-4b7f-bbea-53d5fc95c96c",
+    "verify": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
     "judge": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
-    "fix": "8c87a39a-3a52-4b7f-bbea-53d5fc95c96c",
+    "fix": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
     "demo": "8c87a39a-3a52-4b7f-bbea-53d5fc95c96c",
     "mention": "8c87a39a-3a52-4b7f-bbea-53d5fc95c96c"
   },
