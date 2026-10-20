@@ -14,6 +14,7 @@ from pathlib import Path
 FACTORY = Path(sys.argv[1]).resolve()
 os.environ["FACTORY_STATE"] = os.path.join(tempfile.mkdtemp(prefix="review-test-"), "state.json")
 os.environ.setdefault("LINEAR_API_KEY", "x")
+sys.path.insert(0, str(FACTORY))
 spec = importlib.util.spec_from_file_location("factory", FACTORY / "factory.py")
 f = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(f)

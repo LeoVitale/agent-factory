@@ -45,6 +45,8 @@ services:
     image: agent-sandbox/agent-canvas-cursor:1.27.1
     container_name: agent-sandbox-factory
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8201:8201"
     depends_on:
       - canvas
     env_file: .env

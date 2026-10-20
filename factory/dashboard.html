@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Painel da factory</title>
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --surface: #ffffff;
+        --surface-2: #f0f2f5;
+        --border: #e2e5ea;
+        --text: #1c2129;
+        --muted: #5f6b7a;
+        --faint: #8b95a3;
+        --accent: #2f5bd3;
+        --accent-soft: #e6ecfb;
+        --ok: #1d7a4c;
+        --ok-soft: #e3f3ea;
+        --warn: #9a6200;
+        --warn-soft: #fbf0d9;
+        --bad: #b42d2d;
+        --bad-soft: #fbe5e5;
+        --info-soft: #eceff3;
+        --radius: 10px;
+        --shadow: 0 1px 2px rgba(20, 30, 50, 0.06);
+        color-scheme: light;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #12151a;
+          --surface: #1a1e25;
+          --surface-2: #222731;
+          --border: #2d333f;
+          --text: #e6e9ee;
+          --muted: #9aa4b2;
+          --faint: #6c7686;
+          --accent: #7b9cf4;
+          --accent-soft: #232d48;
+          --ok: #5cc28d;
+          --ok-soft: #17301f;
+          --warn: #e2b04f;
+          --warn-soft: #33290f;
+          --bad: #f07a7a;
+          --bad-soft: #3a1c1c;
+          --info-soft: #262b35;
+          --shadow: none;
+          color-scheme: dark;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.45 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      code,
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12.5px;
+      }
+
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: color-mix(in srgb, var(--bg) 88%, transparent);
+        backdrop-filter: blur(8px);
+        border-bottom: 1px solid var(--border);
+      }
+      .bar {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 12px 16px;
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .bar h1 {
+        font-size: 16px;
+        margin: 0;
+        font-weight: 650;
+      }
+      .bar nav {
+        display: flex;
+        gap: 4px;
+        flex-wrap: wrap;
+        flex: 1;
+      }
+      .bar nav a {
+        color: var(--muted);
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 13px;
+      }
+      .bar nav a:hover {
+        background: var(--surface-2);
+        color: var(--text);
+        text-decoration: none;
+      }
+      .fresh {
+        color: var(--faint);
+        font-size: 12.5px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--ok);
+      }
+      .dot.stale {
+        background: var(--warn);
+      }
+      .dot.down {
+        background: var(--bad);
+      }
+
+      main {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 20px 16px 64px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 28px;
+      }
+      section > h2 {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin: 0 0 10px;
+        font-weight: 600;
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+      }
+      section > h2 .count {
+        color: var(--faint);
+        font-weight: 500;
+        letter-spacing: 0;
+      }
+      .empty {
+        color: var(--faint);
+        padding: 14px 16px;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius);
+      }
+
+      .kpis {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px;
+      }
+      .kpi {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 12px 14px;
+        box-shadow: var(--shadow);
+      }
+      .kpi .v {
+        font-size: 24px;
+        font-weight: 650;
+        font-variant-numeric: tabular-nums;
+      }
+      .kpi .l {
+        color: var(--muted);
+        font-size: 12.5px;
+      }
+      .kpi.alert {
+        border-color: var(--warn);
+        background: var(--warn-soft);
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+        gap: 12px;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+        box-shadow: var(--shadow);
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+      }
+      .card.ask {
+        border-color: var(--warn);
+      }
+      .card .top {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        justify-content: space-between;
+      }
+      .card .name {
+        font-weight: 600;
+        min-width: 0;
+      }
+      .card .name .id {
+        color: var(--muted);
+        font-weight: 500;
+        margin-right: 6px;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 12.5px;
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .links {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        font-size: 13px;
+      }
+      .question {
+        background: var(--warn-soft);
+        border-radius: 8px;
+        padding: 10px 12px;
+        white-space: pre-wrap;
+        font-size: 13.5px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 1px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 550;
+        white-space: nowrap;
+        background: var(--info-soft);
+        color: var(--muted);
+      }
+      .pill.ok {
+        background: var(--ok-soft);
+        color: var(--ok);
+      }
+      .pill.warn {
+        background: var(--warn-soft);
+        color: var(--warn);
+      }
+      .pill.bad {
+        background: var(--bad-soft);
+        color: var(--bad);
+      }
+      .pill.run {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .steps {
+        display: flex;
+        gap: 3px;
+      }
+      .step {
+        flex: 1;
+        min-width: 0;
+        display: grid;
+        gap: 4px;
+      }
+      .step i {
+        display: block;
+        height: 5px;
+        border-radius: 3px;
+        background: var(--surface-2);
+      }
+      .step span {
+        font-size: 11px;
+        color: var(--faint);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .step.done i {
+        background: var(--ok);
+      }
+      .step.skipped i {
+        background: var(--border);
+      }
+      .step.current i {
+        background: var(--accent);
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+      .step.current span {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .step.stopped i {
+        background: var(--warn);
+      }
+      .step.stopped span {
+        color: var(--warn);
+        font-weight: 600;
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.45;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .step.current i {
+          animation: none;
+        }
+      }
+
+      .table-wrap {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow-x: auto;
+        box-shadow: var(--shadow);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13.5px;
+      }
+      th {
+        text-align: left;
+        font-weight: 550;
+        color: var(--muted);
+        font-size: 12px;
+        padding: 9px 12px;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+        background: var(--surface-2);
+      }
+      td {
+        padding: 9px 12px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      td.num,
+      th.num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      td .sub {
+        color: var(--faint);
+        font-size: 12px;
+      }
+      .title-cell {
+        max-width: 420px;
+      }
+      .share {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 140px;
+      }
+      .share i {
+        height: 6px;
+        border-radius: 3px;
+        background: var(--accent);
+        display: block;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .faint {
+        color: var(--faint);
+      }
+
+      details > summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 13px;
+        padding: 6px 0;
+      }
+      .banner {
+        background: var(--bad-soft);
+        color: var(--bad);
+        border-radius: var(--radius);
+        padding: 10px 14px;
+        font-size: 13px;
+      }
+      .loading {
+        color: var(--faint);
+        padding: 40px 0;
+        text-align: center;
+      }
+
+      @media (max-width: 640px) {
+        .cards {
+          grid-template-columns: 1fr;
+        }
+        .bar nav {
+          order: 3;
+          flex-basis: 100%;
+        }
+        .step span {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="bar">
+        <h1>Painel da factory</h1>
+        <nav>
+          <a href="#voce">Precisa de você</a><a href="#andamento">Em andamento</a
+          ><a href="#revisao">Em revisão</a> <a href="#prs">Pull requests</a><a href="#fila">Fila</a
+          ><a href="#metricas">Métricas</a>
+        </nav>
+        <div class="fresh">
+          <span class="dot" id="dot"></span><span id="fresh">carregando…</span>
+        </div>
+      </div>
+    </header>
+    <main id="app"><div class="loading">Lendo o estado da factory, o Canvas e o GitHub…</div></main>
+
+    <script>
+      const REFRESH_MS = 15000;
+      let data = null,
+        fetchedAt = 0,
+        failed = false;
+
+      const esc = (s) =>
+        String(s ?? "").replace(
+          /[&<>"']/g,
+          (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+        );
+      const link = (url, text) =>
+        url ? `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(text)}</a>` : "";
+      const pill = (text, kind = "") => `<span class="pill ${kind}">${esc(text)}</span>`;
+
+      const ago = (iso) => {
+        if (!iso) return "";
+        const min = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+        if (min < 1) return "agora";
+        if (min < 60) return `${min} min`;
+        const h = Math.floor(min / 60);
+        if (h < 48) return `${h} h ${min % 60 ? (min % 60) + " min" : ""}`.trim();
+        return `${Math.floor(h / 24)} dias`;
+      };
+      const duration = (min) =>
+        min == null ? "—" : min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`;
+      const pct = (v) => (v == null ? "—" : `${v}%`);
+
+      const ciPill = (ci) => {
+        if (!ci) return "";
+        const map = {
+          pass: ["CI verde", "ok"],
+          fail: ["CI vermelho", "bad"],
+          pending: ["CI rodando", "run"],
+          none: ["sem CI", ""],
+        };
+        const [t, k] = map[ci.state] || ["CI ?", ""];
+        const title = ci.fail?.length ? ` title="${esc(ci.fail.join(", "))}"` : "";
+        return `<span${title}>${pill(t, k)}</span>`;
+      };
+      const verdictPill = (v) => {
+        if (!v) return "";
+        const map = {
+          APPROVE: ["Judge aprovou", "ok"],
+          REQUEST_CHANGES: ["Judge pediu mudanças", "bad"],
+          COMMENT: ["Judge comentou", "warn"],
+        };
+        const [t, k] = map[v.verdict] || [v.verdict, ""];
+        return `<a href="${esc(v.url)}" target="_blank" rel="noopener">${pill(t, k)}</a>`;
+      };
+      const prState = (p) =>
+        p.state === "MERGED"
+          ? pill("mergeado", "ok")
+          : p.state === "CLOSED"
+            ? pill("fechado")
+            : p.draft
+              ? pill("rascunho")
+              : pill("aberto", "run");
+      const stagePill = (i) =>
+        pill(
+          i.label,
+          { needs_you: "warn", running: "run", review: "ok", done: "ok" }[i.group] || "",
+        );
+
+      const steps = (i) =>
+        `<div class="steps">${i.steps
+          .map(
+            (s) =>
+              `<div class="step ${s.state}" title="${esc(s.label)}"><i></i><span>${esc(s.label)}</span></div>`,
+          )
+          .join("")}</div>`;
+
+      const issueLinks = (i) => `<div class="links">
+  ${i.live_url ? link(i.live_url, "Acompanhar ao vivo") : ""}
+  ${i.pr ? link(i.pr.url, `PR #${i.pr.number}`) : ""}
+  ${link(i.review_url, "Revisão")}
+  ${i.demo ? link(i.demo.linear, "Demo") : ""}
+  ${link(i.slack_url, "Thread no Slack")}
+  ${link(i.url, "Linear")}
+</div>`;
+
+      const section = (id, title, count, body) =>
+        `<section id="${id}"><h2>${esc(title)}${count != null ? ` <span class="count">${count}</span>` : ""}</h2>${body}</section>`;
+      const empty = (text) => `<div class="empty">${esc(text)}</div>`;
+
+      function needsYou(list) {
+        if (!list.length) return empty("Nada esperando por você.");
+        return `<div class="cards">${list
+          .map(
+            (i) => `<article class="card ask">
+    <div class="top"><div class="name"><span class="id">${esc(i.id)}</span>${esc(i.title)}</div>${stagePill(i)}</div>
+    <div class="meta"><span>${i.stage === "refused" ? "A descrição da issue precisa de ajuste" : `Parou no ${esc(i.waiting_stage || "?")}`}</span>
+      ${i.since ? `<span>há ${ago(i.since)}</span>` : ""}</div>
+    ${
+      i.question
+        ? `<div class="question">${esc(i.question)}</div>`
+        : `<div class="faint">A pergunta está na thread do Slack e no Linear.</div>`
+    }
+    ${issueLinks(i)}
+  </article>`,
+          )
+          .join("")}</div>`;
+      }
+
+      function running(list) {
+        if (!list.length) return empty("Nenhuma estação rodando agora.");
+        return `<div class="cards">${list
+          .map(
+            (i) => `<article class="card">
+    <div class="top"><div class="name"><span class="id">${esc(i.id)}</span>${esc(i.title)}</div>${stagePill(i)}</div>
+    ${steps(i)}
+    <div class="meta">
+      ${i.since ? `<span>${esc(i.label)} há ${ago(i.since)}</span>` : ""}
+      ${i.round ? `<span>correção ${i.round} de ${i.max_rounds}</span>` : ""}
+      <span>${i.conversations.length} conversas</span>
+      ${i.pr?.ci ? ciPill(i.pr.ci) : ""}
+    </div>
+    ${issueLinks(i)}
+  </article>`,
+          )
+          .join("")}</div>`;
+      }
+
+      function inReview(list) {
+        if (!list.length) return empty("Nenhum PR esperando sua revisão.");
+        return `<div class="table-wrap"><table><thead><tr>
+    <th>Issue</th><th>PR</th><th>Estado</th><th>Correções</th><th>Links</th></tr></thead><tbody>
+    ${list
+      .map(
+        (i) => `<tr>
+      <td class="title-cell">${link(i.url, i.id)} ${esc(i.title)}<div class="sub">${esc(i.branch || "")} → ${esc(i.base || "")}</div></td>
+      <td>${i.pr ? link(i.pr.url, "#" + i.pr.number) : "—"}</td>
+      <td>${i.pr?.ci ? ciPill(i.pr.ci) : ""} ${i.pr?.verdict ? verdictPill(i.pr.verdict) : ""}
+        ${i.pr?.mergeable === "CONFLICTING" ? pill("conflito", "bad") : ""}</td>
+      <td class="num">${i.round}</td>
+      <td>${issueLinks(i)}</td>
+    </tr>`,
+      )
+      .join("")}</tbody></table></div>`;
+      }
+
+      function pulls(list) {
+        const open = list.filter((p) => p.state === "OPEN"),
+          closed = list.filter((p) => p.state !== "OPEN");
+        const row = (p) => `<tr>
+    <td class="num">${link(p.url, "#" + p.number)}</td>
+    <td class="title-cell">${esc(p.title)}<div class="sub">${esc(p.head)} → ${esc(p.base)}</div></td>
+    <td>${p.issue ? link(p.issue.url, p.issue.id) + `<div class="sub">${esc(p.issue.stage)}</div>` : `<span class="faint">fora da factory</span>`}</td>
+    <td>${prState(p)}</td>
+    <td>${ciPill(p.ci)} ${p.mergeable === "CONFLICTING" ? pill("conflito", "bad") : ""}</td>
+    <td>${verdictPill(p.verdict)}</td>
+    <td class="muted">${ago(p.updated_at)}</td>
+  </tr>`;
+        const table = (rows) => `<div class="table-wrap"><table><thead><tr>
+    <th class="num">PR</th><th>Título</th><th>Issue</th><th>Estado</th><th>CI</th><th>Revisão</th><th>Atualizado</th>
+    </tr></thead><tbody>${rows.map(row).join("")}</tbody></table></div>`;
+        return (
+          (open.length ? table(open) : empty("Nenhum PR aberto.")) +
+          (closed.length
+            ? `<details><summary>${closed.length} PRs mergeados ou fechados</summary>${table(closed)}</details>`
+            : "")
+        );
+      }
+
+      function later(list, done) {
+        const body = list.length
+          ? `<div class="table-wrap"><table><thead><tr><th>Issue</th><th>Estado</th><th>Esperando</th><th>Links</th></tr></thead><tbody>
+    ${list
+      .map(
+        (i) => `<tr>
+      <td class="title-cell">${link(i.url, i.id)} ${esc(i.title)}<div class="sub">${esc(i.project || "")}</div></td>
+      <td>${stagePill(i)}</td>
+      <td class="muted">${i.blocked_on.length ? esc(i.blocked_on.join(", ")) : "uma vaga livre"}</td>
+      <td>${issueLinks(i)}</td></tr>`,
+      )
+      .join("")}</tbody></table></div>`
+          : empty("Fila vazia.");
+        const finished = done.length
+          ? `<details><summary>${done.length} issues concluídas</summary><div class="table-wrap"><table><tbody>
+    ${done
+      .map(
+        (
+          i,
+        ) => `<tr><td class="title-cell">${link(i.url, i.id)} ${esc(i.title)}</td><td>${stagePill(i)}</td>
+      <td class="num">${i.round} correções</td><td>${issueLinks(i)}</td></tr>`,
+      )
+      .join("")}</tbody></table></div></details>`
+          : "";
+        return body + finished;
+      }
+
+      function metrics(m) {
+        const s = m.summary,
+          max = Math.max(...m.stations.map((x) => x.share), 1);
+        const tri = (v) =>
+          v == null ? `<span class="faint">—</span>` : v ? pill("sim", "ok") : pill("não", "bad");
+        return `<div class="kpis">
+      <div class="kpi"><div class="v">${s.conversations}</div><div class="l">conversas no Canvas</div></div>
+      <div class="kpi"><div class="v">${s.events.toLocaleString("pt-BR")}</div><div class="l">eventos (proxy de tokens)</div></div>
+      <div class="kpi"><div class="v">${pct(s.verify_first_rate)}</div><div class="l">Verify aprovado de primeira</div></div>
+      <div class="kpi"><div class="v">${pct(s.judge_first_rate)}</div><div class="l">Judge aprovou de primeira</div></div>
+      <div class="kpi"><div class="v">${s.avg_fix_rounds?.toLocaleString("pt-BR") ?? "—"}</div><div class="l">correções por issue</div></div>
+      <div class="kpi"><div class="v">${duration(s.avg_minutes_to_review)}</div><div class="l">do primeiro agente à revisão</div></div>
+    </div>
+    <div class="table-wrap" style="margin-top:12px"><table><thead><tr>
+      <th>Estação</th><th class="num">Execuções</th><th class="num">Eventos</th><th>Parcela</th><th class="num">Média por execução</th><th class="num">Duração média</th>
+    </tr></thead><tbody>${m.stations
+      .map(
+        (x) => `<tr>
+      <td>${esc(x.label)}</td><td class="num">${x.runs}</td><td class="num">${x.events.toLocaleString("pt-BR")}</td>
+      <td><div class="share"><i style="width:${Math.round((100 * x.share) / max)}px"></i><span class="muted">${x.share}%</span></div></td>
+      <td class="num">${x.avg_events}</td><td class="num">${duration(x.avg_minutes)}</td></tr>`,
+      )
+      .join("")}</tbody></table></div>
+    <details><summary>Por issue</summary><div class="table-wrap"><table><thead><tr>
+      <th>Issue</th><th>Estado</th><th class="num">Conversas</th><th class="num">Correções</th><th class="num">Eventos</th>
+      <th>Verify de primeira</th><th>Judge de primeira</th><th class="num">Até a revisão</th></tr></thead><tbody>
+      ${m.issues
+        .map(
+          (r) => `<tr><td>${link(r.url, r.id)}</td><td class="muted">${esc(r.stage)}</td>
+        <td class="num">${r.conversations}</td><td class="num">${r.fix_rounds}</td><td class="num">${r.events.toLocaleString("pt-BR")}</td>
+        <td>${tri(r.verify_first)}</td><td>${tri(r.judge_first)}</td><td class="num">${duration(r.minutes_to_review)}</td></tr>`,
+        )
+        .join("")}
+    </tbody></table></div></details>
+    <p class="faint" style="font-size:12.5px;margin:8px 0 0">O Cursor não informa tokens ao Canvas. Eventos por conversa são o melhor proxy disponível: conversas longas reenviam o contexto a cada passo.</p>`;
+      }
+
+      function render() {
+        const d = data,
+          by = (g) => d.issues.filter((i) => i.group === g);
+        const you = by("needs_you"),
+          run = by("running"),
+          review = by("review"),
+          queue = by("later"),
+          done = by("done");
+        const openPrs = d.pulls.filter((p) => p.state === "OPEN").length;
+        document.getElementById("app").innerHTML = `
+    ${d.errors.length ? `<div class="banner">Algumas fontes falharam: ${d.errors.map(esc).join(" · ")}</div>` : ""}
+    <div class="kpis">
+      <div class="kpi ${you.length ? "alert" : ""}"><div class="v">${you.length}</div><div class="l">precisam de você</div></div>
+      <div class="kpi"><div class="v">${run.length}</div><div class="l">em andamento</div></div>
+      <div class="kpi"><div class="v">${review.length}</div><div class="l">esperando sua revisão</div></div>
+      <div class="kpi"><div class="v">${queue.length}</div><div class="l">na fila ou bloqueadas</div></div>
+      <div class="kpi"><div class="v">${openPrs}</div><div class="l">PRs abertos</div></div>
+      ${d.mentions.length ? `<div class="kpi"><div class="v">${d.mentions.length}</div><div class="l">menções do Slack rodando</div></div>` : ""}
+    </div>
+    ${section("voce", "Precisa de você", you.length, needsYou(you))}
+    ${section("andamento", "Em andamento", run.length, running(run))}
+    ${section("revisao", "Em revisão", review.length, inReview(review))}
+    ${section("prs", "Pull requests", openPrs, pulls(d.pulls))}
+    ${section("fila", "Fila e bloqueadas", queue.length, later(queue, done))}
+    ${section("metricas", "Métricas", null, metrics(d.metrics))}`;
+        const you_ = you.length ? `(${you.length}) ` : "";
+        document.title = `${you_}Painel da factory`;
+      }
+
+      function tickFresh() {
+        const el = document.getElementById("fresh"),
+          dot = document.getElementById("dot");
+        if (!fetchedAt) return;
+        const s = Math.round((Date.now() - fetchedAt) / 1000);
+        el.textContent = failed ? `sem conexão · última leitura há ${s} s` : `atualizado há ${s} s`;
+        dot.className = "dot" + (failed ? " down" : s > 45 ? " stale" : "");
+      }
+
+      async function load() {
+        try {
+          const r = await fetch("/api/board", { cache: "no-store" });
+          const body = await r.json();
+          if (!r.ok) throw new Error(body.error || r.status);
+          data = body;
+          fetchedAt = Date.now();
+          failed = false;
+          render();
+        } catch (e) {
+          failed = true;
+          if (!data)
+            document.getElementById("app").innerHTML =
+              `<div class="banner">Não consegui ler o painel: ${esc(e.message)}</div>`;
+        }
+        tickFresh();
+      }
+
+      load();
+      setInterval(load, REFRESH_MS);
+      setInterval(tickFresh, 1000);
+    </script>
+  </body>
+</html>

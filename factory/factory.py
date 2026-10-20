@@ -28,6 +28,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+import dashboard
+
 HERE = Path(__file__).resolve().parent
 CONFIG = json.loads(Path(os.environ.get("FACTORY_CONFIG", HERE / "config.json")).read_text())
 PROMPTS = HERE / "prompts"
@@ -250,9 +252,14 @@ def linear_upload(path):
     return target["assetUrl"]
 
 
+def is_status_note(body):
+    """The factory's own status comments (Build done, demo, ready for review); its questions and the answers stay."""
+    return body.startswith(FACTORY_MARK) and not body[len(FACTORY_MARK):].lstrip().startswith(("🙋", "📨", "📝"))
+
+
 def issue_block(issue):
     parts = [f"**{issue['identifier']}: {issue['title']}**", issue["url"], "", issue.get("description") or "(no description)"]
-    notes = [c for c in issue.get("comments", {}).get("nodes", [])]
+    notes = [c for c in issue.get("comments", {}).get("nodes", []) if not is_status_note(c["body"])]
     if notes:
         parts += ["", "### Comments"]
         for c in sorted(notes, key=lambda c: c["createdAt"]):
@@ -1181,7 +1188,7 @@ def start_mention(state, m):
     workspace = CONFIG["mentions"]["workspace"]
     Path(workspace).mkdir(parents=True, exist_ok=True)
     out = canvas("POST", "/api/conversations", {
-        "agent_profile_id": CONFIG["agent_profile_id"],
+        "agent_profile_id": CONFIG.get("station_profiles", {}).get("mention", CONFIG["agent_profile_id"]),
         "workspace": {"kind": "LocalWorkspace", "working_dir": workspace},
         "worktree": False,
         "tags": {"factory": "slack-mention"},
@@ -1255,6 +1262,7 @@ def stop_for_human(rec, question):
     rec["waiting_stage"] = rec["stage"] if rec["stage"] != "waiting" else rec.get("waiting_stage")
     rec["stage"] = "waiting"
     rec["waiting_since"] = now()
+    rec["question"] = question
     where = badge(rec["waiting_stage"])
     notify(rec, f"🙋 *Preciso de você* no {where}\n{quote(esc(question))}\n"
                 "💬 Responda aqui na thread ou na issue do Linear.", human=True)
@@ -1536,6 +1544,11 @@ def main():
     if "--once" in sys.argv:
         return tick(state)
     start_socket_mode(state)
+    if CONFIG.get("dashboard", {}).get("enabled", True):
+        try:
+            log.info("dashboard on %s:%s", *dashboard.start())
+        except Exception:
+            log.error("dashboard failed to start:\n%s", traceback.format_exc())
     last_tick = 0.0
     while True:
         woken = WAKE.is_set()
