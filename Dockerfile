@@ -1,6 +1,6 @@
 # Agent Canvas all-in-one image + Cursor CLI, for running Cursor (ACP) agents
 # inside a container instead of directly on the Mac.
-FROM ghcr.io/openhands/agent-canvas:1.27.1
+FROM ghcr.io/openhands/agent-canvas:1.29.0
 
 USER root
 

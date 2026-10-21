@@ -9,7 +9,7 @@ x-identity: &identity # Commits made in the sandbox are authored as you.
 services:
   canvas:
     build: .
-    image: agent-sandbox/agent-canvas-cursor:1.27.1
+    image: agent-sandbox/agent-canvas-cursor:1.29.0
     container_name: agent-sandbox
     restart: unless-stopped
     ports:
@@ -42,7 +42,7 @@ services:
   # Agentic factory orchestrator: polls Linear and GitHub, runs one Canvas
   # conversation per station, and talks to you over Slack Socket Mode.
   factory:
-    image: agent-sandbox/agent-canvas-cursor:1.27.1
+    image: agent-sandbox/agent-canvas-cursor:1.29.0
     container_name: agent-sandbox-factory
     restart: unless-stopped
     ports:
