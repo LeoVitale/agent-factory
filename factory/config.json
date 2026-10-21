@@ -18,6 +18,7 @@
   "max_active": 3,
   "poll_seconds": 120,
   "no_checks_timeout_seconds": 900,
+  "worktree_cleanup_hours": 24,
   "schema_paths": ["supabase/"],
   "mentions": {
     "channels": ["C0CA32LN7M0"],

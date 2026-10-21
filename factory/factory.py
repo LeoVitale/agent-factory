@@ -28,7 +28,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import dashboard
@@ -1557,6 +1557,10 @@ def tick(state):
             announce_merges(state)
         except Exception:
             log.error("merge check failed:\n%s", traceback.format_exc())
+        try:
+            clean_worktrees(state)
+        except Exception:
+            log.error("worktree cleanup failed:\n%s", traceback.format_exc())
         for rec in [r for r in state["issues"].values() if r["stage"] == "review" and r.get("inbox")]:
             try:
                 reopen_from_review(rec)
@@ -1625,6 +1629,63 @@ def announce_merges(state):
         by = (pr.get("mergedBy") or {}).get("login")
         notify(rec, f"🎉 *PR mergeado!* <{rec['pr_url']}|PR #{rec['pr_number']}> entrou em `{pr['baseRefName']}`"
                     + (f" por {esc(by)}" if by else "") + ". A issue saiu da factory. Valeu! 🙌", broadcast=True)
+
+
+def clean_worktrees(state):
+    """Once the grace period after a merge is over, the issue's worktree and local branch go. What the merge did not
+    carry keeps them, and the issue thread hears why once."""
+    grace = timedelta(hours=CONFIG.get("worktree_cleanup_hours", 24))
+    removed = False
+    for rec in state["issues"].values():
+        if rec["stage"] != "merged" or rec.get("worktree_removed_at") or not rec.get("merged_at"):
+            continue
+        if datetime.now(timezone.utc) - datetime.fromisoformat(rec["merged_at"].replace("Z", "+00:00")) < grace:
+            continue
+        try:
+            why = clean_worktree(rec)
+        except Exception:
+            log.error("%s worktree cleanup failed:\n%s", rec["identifier"], traceback.format_exc())
+            continue
+        if why is None:
+            removed = True
+        elif why != rec.get("worktree_kept"):
+            rec["worktree_kept"] = why
+            notify(rec, f"🧹 *Worktree mantido*: {why} Ele fica em `{rec['worktree']}` até isso ser resolvido.")
+    if removed and mutate("prune worktrees"):
+        git("worktree", "prune")
+
+
+def clean_worktree(rec):
+    """None once the worktree and branch are gone; otherwise why they stay."""
+    path, branch = Path(rec["worktree"]), rec["branch"]
+    if path.exists():
+        conv = rec.get("conversation_id")
+        if conv and canvas("GET", f"/api/conversations/{conv}").get("execution_status") == "running":
+            return "uma conversa da Canvas ainda está rodando nele."
+        if git("status", "--porcelain", cwd=path):
+            return "ele tem mudanças fora de commit."
+    head = git("rev-parse", f"refs/heads/{branch}") if ref_exists(f"refs/heads/{branch}") else None
+    if head:
+        # The base takes pull requests as merge commits and GitHub deletes the remote branch, so `git branch -d`
+        # refuses. The branch is safe to delete when its head is inside the pull request's merge commit.
+        pr = gh_json("pr", "view", str(rec["pr_number"]), "--repo", CONFIG["github_repo"], "--json", "mergeCommit")
+        merge = ((pr or {}).get("mergeCommit") or {}).get("oid")
+        if not merge:
+            return f"não achei o merge commit do PR #{rec['pr_number']}."
+        if run(["git", "cat-file", "-e", f"{merge}^{{commit}}"], check=False).returncode:
+            git("fetch", "origin", merge)
+        if run(["git", "merge-base", "--is-ancestor", head, merge], check=False).returncode:
+            return f"a branch `{branch}` tem commits que não entraram no PR #{rec['pr_number']}."
+    if not mutate(f"remove worktree {path} and branch {branch}"):
+        return None
+    if path.exists():
+        git("worktree", "remove", str(path))
+    if head:
+        git("branch", "-D", branch)
+    rec["worktree_removed_at"] = now()
+    rec.pop("worktree_kept", None)
+    log.info("%s: removed worktree %s and branch %s", rec["identifier"], path, branch)
+    return None
 
 
 def keep_in_review(rec):
