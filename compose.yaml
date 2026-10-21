@@ -31,6 +31,7 @@ services:
       - ./openhands-state:/home/openhands/.openhands
       - ./projects:/projects
       - ./cursor-mcp.json:/opt/sandbox/cursor-mcp.json:ro
+      - ./claude-mcp.json:/opt/sandbox/claude-mcp.json:ro
       # Global skills, at their host paths so their symlinks resolve.
       - /Users/vitale/.agents/skills:/Users/vitale/.agents/skills:ro
       - /Users/vitale/.claude/skills:/Users/vitale/.claude/skills:ro
