@@ -53,7 +53,7 @@ RETRY_NOTE = ("A previous conversation for this station stopped with a connectio
               "before it finished. Its work may already be in this working tree: check `git status` and `git log` "
               "first, keep what it did, and continue from there. The job is unchanged:\n\n---\n\n")
 STATIONS = ("plan", "build", "verify", "judge", "fix", "demo")
-DONE_STAGES = ("review", "dropped")
+DONE_STAGES = ("review", "merged", "dropped")
 FACTORY_MARK = "[factory]"
 
 DEMO = CONFIG.get("demo", {})
@@ -290,6 +290,7 @@ LOOK = {
     "final": ("🏁", "Final checks"),
     "demo": ("🎬", "Demo"),
     "review": ("👀", "Review"),
+    "merged": ("🎉", "Merged"),
     "waiting": ("🙋", "Needs you"),
     "dropped": ("🚪", "Out"),
     "refused": ("⛔", "Refused"),
@@ -326,6 +327,8 @@ def pipeline(rec):
     at = rec.get("waiting_stage") if stage == "waiting" else stage
     if at == "final":
         at = "ci"
+    if at == "merged":
+        at = "review"
     pos = steps.index(at) if at in steps else -1
     planned = any(c["station"] == "plan" for c in rec.get("conversations", []))
     out = []
@@ -341,6 +344,8 @@ def pipeline(rec):
             out.append(f"🙋 *{name}*")
         elif stage == "final":
             out.append(f"⏳ {name}")
+        elif stage == "merged":
+            out.append(f"✅ {name}")
         else:
             out.append(f"{emoji} *{name}*")
     return " › ".join(out)
@@ -352,6 +357,8 @@ def root_note(rec):
         return f"🙋 Esperando você no {badge(rec.get('waiting_stage'))}"
     if stage == "blocked":
         return "🚧 Esperando " + (", ".join(rec.get("blocked_on") or []) or "outras entregas")
+    if stage == "merged":
+        return f"🎉 Mergeado em `{rec['base']}`"
     return {"queued": "⏳ Na fila", "final": "✅ Aprovado pela Judge", "review": "👀 Pronto para sua revisão",
             "dropped": "🚪 Saiu da factory", "refused": "⛔ Não começou: falta algo na descrição"}.get(stage)
 
@@ -1546,6 +1553,10 @@ def tick(state):
                 deliver_replies(rec)
             except Exception:
                 log.error("%s reply failed:\n%s", rec["identifier"], traceback.format_exc())
+        try:
+            announce_merges(state)
+        except Exception:
+            log.error("merge check failed:\n%s", traceback.format_exc())
         for rec in [r for r in state["issues"].values() if r["stage"] == "review" and r.get("inbox")]:
             try:
                 reopen_from_review(rec)
@@ -1592,6 +1603,28 @@ def quick_tick(state):
                 save_state(state)
             except Exception:
                 log.error("%s quick check failed:\n%s", rec["identifier"], traceback.format_exc())
+
+
+def announce_merges(state):
+    """A pull request in review that got merged: its thread hears it once, and the issue leaves the review loops.
+    Merges from before the factory first looked are marked without a message."""
+    review = {r["pr_number"]: r for r in state["issues"].values() if r["stage"] == "review" and r.get("pr_number")}
+    if not review:
+        return
+    since = datetime.fromisoformat(state.setdefault("merge_notices_since", now()))
+    merged = gh_json("pr", "list", "--repo", CONFIG["github_repo"], "--state", "merged", "--limit", "50",
+                     "--json", "number,mergedAt,mergedBy,baseRefName") or []
+    for pr in merged:
+        rec = review.get(pr["number"])
+        if not rec:
+            continue
+        rec.update(stage="merged", merged_at=pr["mergedAt"])
+        if datetime.fromisoformat(pr["mergedAt"].replace("Z", "+00:00")) < since:
+            log.info("%s: PR #%s was merged before merge notices started", rec["identifier"], pr["number"])
+            continue
+        by = (pr.get("mergedBy") or {}).get("login")
+        notify(rec, f"🎉 *PR mergeado!* <{rec['pr_url']}|PR #{rec['pr_number']}> entrou em `{pr['baseRefName']}`"
+                    + (f" por {esc(by)}" if by else "") + ". A issue saiu da factory. Valeu! 🙌", broadcast=True)
 
 
 def keep_in_review(rec):

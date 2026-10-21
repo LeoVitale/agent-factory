@@ -37,9 +37,9 @@ FINISHED = ("finished", "error", "stuck", "waiting_for_confirmation")
 LABELS = {
     "queued": "Na fila", "blocked": "Bloqueada", "plan": "Plan", "build": "Build", "ci": "CI", "verify": "Verify",
     "judge": "Judge", "fix": "Fix", "final": "Checagem final", "demo": "Demo", "review": "Em revisão",
-    "waiting": "Precisa de você", "dropped": "Saiu", "refused": "Recusada", "MERGED": "Mergeado", "CLOSED": "PR fechado",
+    "waiting": "Precisa de você", "dropped": "Saiu", "refused": "Recusada", "MERGED": "Mergeado", "merged": "Mergeado", "CLOSED": "PR fechado",
 }
-GROUPS = {"waiting": "needs_you", "refused": "needs_you", "review": "review", "queued": "later", "blocked": "later",
+GROUPS = {"waiting": "needs_you", "refused": "needs_you", "review": "review", "merged": "done", "queued": "later", "blocked": "later",
           "dropped": "out"}
 
 
@@ -171,6 +171,8 @@ def steps(rec):
     at = rec.get("waiting_stage") if stage == "waiting" else stage
     if at == "final":
         at = "ci"
+    if at == "merged":
+        at = "review"
     pos = keys.index(at) if at in keys else -1
     if stage in ("queued", "blocked", "refused"):
         pos = 0
