@@ -36,7 +36,6 @@ services:
       - /Users/vitale/.claude/skills:/Users/vitale/.claude/skills:ro
       - /Users/vitale/.cursor/skills:/Users/vitale/.cursor/skills:ro
       - /Users/vitale/.codex/skills:/Users/vitale/.codex/skills:ro
-      - /Users/vitale/projects/vita/CodeFairy/skills:/Users/vitale/projects/vita/CodeFairy/skills:ro
       - /Users/vitale/projects/vita/guided-codebase-builder/skills/guided-codebase-builder:/Users/vitale/projects/vita/guided-codebase-builder/skills/guided-codebase-builder:ro
 
   # Agentic factory orchestrator: polls Linear and GitHub, runs one Canvas
