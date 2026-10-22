@@ -1,60 +1,51 @@
 {
-  "team_key": "HES",
-  "states": {
-    "ready": "Ready for agent",
-    "progress": "In Progress",
-    "review": "In review"
+  "version": 1,
+  "linear": {
+    "team_key": "",
+    "states": {
+      "ready": "Ready for agent",
+      "progress": "In Progress",
+      "review": "In review"
+    },
+    "label": "factory",
+    "needs_human_label": "factory:needs-human"
   },
-  "label": "factory",
-  "needs_human_label": "factory:needs-human",
-  "canvas_public_url": "http://localhost:8200/canvas",
-  "agent_profile_id": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
-  "github_repo": "LeoVitale/project-hestia",
-  "repo_path": "/projects/project-hestia",
-  "worktrees_path": "/projects/worktrees",
-  "base_branch": "main",
-  "max_fix_rounds": 3,
-  "max_base_syncs": 3,
-  "max_active": 3,
-  "poll_seconds": 120,
-  "no_checks_timeout_seconds": 900,
-  "worktree_cleanup_hours": 24,
-  "schema_paths": ["supabase/"],
-  "mentions": {
-    "channels": ["C0CA32LN7M0"],
-    "workspace": "/projects/slack-mentions",
-    "debounce_seconds": 15,
-    "poll_seconds": 10
+  "github_repo": "",
+  "base_branch": "",
+  "artifacts": {
+    "feature": "\\.specs/features/([a-z0-9-]+)/",
+    "tasks": ".specs/features/{feature}/tasks/",
+    "checks": ".specs/features/{feature}/checks/",
+    "discovery": ".specs/features/{feature}/discovery.md"
+  },
+  "schema_guard": {
+    "paths": [],
+    "command": ""
+  },
+  "ci": {
+    "ignore": []
   },
   "slack": {
-    "channel_prefix": "hestia-",
-    "default_channel": "hestia-factory",
+    "channel_prefix": "factory-",
+    "default_channel": "factory",
     "project_channels": {}
   },
+  "limits": {
+    "max_fix_rounds": 3,
+    "max_base_syncs": 3,
+    "max_active": 3
+  },
   "demo": {
-    "enabled": true,
-    "supabase_url": "http://host.docker.internal:54321",
-    "supabase_anon_key": "",
-    "evidence_path": "/projects/factory-evidence",
-    "evidence_branch": "factory-evidence",
+    "enabled": false,
     "max_parallel": 1,
     "max_file_mb": 50,
+    "evidence_branch": "factory-evidence",
     "port_before": 5181,
     "port_after": 5182,
-    "tools_path": "/projects/.demo-tools"
-  },
-  "active_poll_seconds": 15,
-  "station_profiles": {
-    "plan": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
-    "build": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
-    "verify": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
-    "judge": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
-    "fix": "35c6f5f6-6592-4e4f-8c6c-cc1e4e9f61c5",
-    "demo": "8c87a39a-3a52-4b7f-bbea-53d5fc95c96c",
-    "mention": "8c87a39a-3a52-4b7f-bbea-53d5fc95c96c"
-  },
-  "dashboard": {
-    "enabled": true,
-    "port": 8201
+    "vars": {
+      "install": "the project's install command, for example `npm ci`",
+      "start_app": "the command that serves the app on $PORT",
+      "data_rules": "where the demo's data comes from and which local account to sign in with."
+    }
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline tests for what people read: the Slack thread root, station updates, stops, and Linear comments.
 
-  python3 tools/agent-factory/factory/tests/test_messages.py tools/agent-factory/factory
+  python3 tests/test_messages.py
 """
 import json
 import os
@@ -9,16 +9,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-FACTORY = Path(sys.argv[1]).resolve()
-ROOT = Path(tempfile.mkdtemp(prefix="messages-test-"))
-cfg = json.loads((FACTORY / "config.json").read_text())
-cfg["demo"]["tools_path"] = str(ROOT / "tools")
-cfg["demo"]["evidence_path"] = str(ROOT / "evidence")
-(ROOT / "config.json").write_text(json.dumps(cfg))
-os.environ.update(FACTORY_CONFIG=str(ROOT / "config.json"), FACTORY_STATE=str(ROOT / "state" / "state.json"),
-                  LINEAR_API_KEY="x")
-sys.path.insert(0, str(FACTORY))
-import factory as f  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tests.helpers import TEMPLATES, load_engine, project, sh  # noqa: E402
+
+ROOT, CLONE = project("messages-test-", instance={"agent_profile_id": "default-profile", "station_profiles": {"demo": "demo-profile"}})
+(CLONE / ".factory" / "demo-kit.mjs").write_text("// demo kit\n")
+sh("git", "add", ".factory", cwd=CLONE)
+sh("git", "commit", "-qm", "demo kit", cwd=CLONE)
+cfg = {"agent_profile_id": "default-profile", "station_profiles": {"demo": "demo-profile"}}
+f = load_engine()
 
 fails = 0
 
@@ -118,7 +117,7 @@ f.issue_detail = lambda i: {"comments": {"nodes": [
     {"id": "2", "createdAt": "2030", "user": {"id": "me"}, "body": "Yes, add the seed."}]}}
 got = f.linear_replies(rec_at("waiting", waiting_since="2029"))
 check("factory comments are not replies", [g["text"] for g in got] == ["Yes, add the seed."], got)
-answer = (FACTORY / "prompts" / "answer.md").read_text()
+answer = (TEMPLATES / "prompts" / "answer.md").read_text()
 check("answer prompt keeps the [factory] mark first", "`[factory] 📨 Answer from the person" in answer)
 
 print("FAILURES:", fails)

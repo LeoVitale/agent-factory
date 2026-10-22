@@ -5,11 +5,11 @@
 # entrypoint.
 set -euo pipefail
 
-HOST_HOME=/Users/vitale
+HOST_HOME="${HOST_HOME:-}"
 
 for root in .agents .claude .cursor .codex; do
   mkdir -p "$HOME/$root"
-  if [ -d "$HOST_HOME/$root/skills" ]; then
+  if [ -n "$HOST_HOME" ] && [ -d "$HOST_HOME/$root/skills" ]; then
     ln -sfn "$HOST_HOME/$root/skills" "$HOME/$root/skills"
   fi
 done

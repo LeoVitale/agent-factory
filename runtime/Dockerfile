@@ -4,19 +4,22 @@ FROM ghcr.io/openhands/agent-canvas:1.29.0
 
 USER root
 
+# The host home, so agent profiles written on the host (`$HOME/.local/bin/agent`) resolve here too.
+ARG HOST_HOME
+
 # Cursor CLI (official installer). Installed outside $HOME so the persisted home
 # volume never shadows it.
 RUN mkdir -p /opt/cursor \
  && HOME=/opt/cursor bash -c 'curl -fsSL https://cursor.com/install | bash' \
  && ln -sf /opt/cursor/.local/bin/agent /usr/local/bin/agent \
  && ln -sf /opt/cursor/.local/bin/cursor-agent /usr/local/bin/cursor-agent \
- && mkdir -p /Users/vitale/.local/bin \
- && ln -sf /usr/local/bin/agent /Users/vitale/.local/bin/agent \
- && ln -sf /usr/local/bin/cursor-agent /Users/vitale/.local/bin/cursor-agent \
+ && mkdir -p "${HOST_HOME}/.local/bin" \
+ && ln -sf /usr/local/bin/agent "${HOST_HOME}/.local/bin/agent" \
+ && ln -sf /usr/local/bin/cursor-agent "${HOST_HOME}/.local/bin/cursor-agent" \
  && chown -R openhands:openhands /opt/cursor
 
-# pnpm at the version project-hestia pins in packageManager.
-RUN corepack enable && corepack prepare pnpm@11.17.0 --activate
+# Corepack runs the pnpm or yarn version each project pins in packageManager.
+RUN corepack enable
 
 # RTK rewrites the agents' shell commands so their output costs fewer tokens.
 # Pinned release, checked against the SHA-256 in the release's checksums.txt.

@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """Offline tests: CI is checked only after the-judge approves, never between Build/Fix and Verify.
 
-  python3 tools/agent-factory/factory/tests/test_ci_after_judge.py tools/agent-factory/factory
+  python3 tests/test_ci_after_judge.py
 """
 import importlib.util, os, sys, tempfile
 from pathlib import Path
 
-FACTORY = Path(sys.argv[1]).resolve()
-os.environ["FACTORY_STATE"] = os.path.join(tempfile.mkdtemp(prefix="ci-test-"), "state.json")
-os.environ.setdefault("LINEAR_API_KEY", "x")
-sys.path.insert(0, str(FACTORY))
-spec = importlib.util.spec_from_file_location("factory", FACTORY / "factory.py")
-f = importlib.util.module_from_spec(spec); spec.loader.exec_module(f)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tests.helpers import TEMPLATES, load_engine, project, sh  # noqa: E402
+
+project("ci-test-")
+f = load_engine()
 
 calls = []
 f.notify = lambda rec, text, human=False, broadcast=False: calls.append(("notify", text))

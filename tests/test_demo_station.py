@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline tests for the Demo station: manifest checks, markdown, evidence push, Linear upload, stage flow.
 
-  python3 tools/agent-factory/factory/tests/test_demo_station.py tools/agent-factory/factory
+  python3 tests/test_demo_station.py
 
 Uses a throwaway git origin and a local HTTP server; nothing reaches Linear, GitHub or Slack.
 """
@@ -15,9 +15,10 @@ import threading
 from pathlib import Path
 
 ROOT = Path(tempfile.mkdtemp(prefix="demo-test-"))
-FACTORY = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tests.helpers import load_engine, project  # noqa: E402
 
-# a throwaway origin + clone standing in for /projects/project-hestia
+# a throwaway origin + clone standing in for the project's clone in /projects
 bare, clone = ROOT / "origin.git", ROOT / "clone"
 subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
 subprocess.run(["git", "clone", "-q", str(bare), str(clone)], check=True)
@@ -26,15 +27,9 @@ os.environ.update({k: env[k] for k in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "G
 (clone / "README.md").write_text("hi\n")
 subprocess.run("git add . && git commit -qm init && git push -q origin HEAD:main", shell=True, cwd=clone, check=True)
 
-cfg = json.loads((FACTORY / "config.json").read_text())
-cfg["repo_path"] = str(clone)
-cfg["demo"]["evidence_path"] = str(ROOT / "evidence")
-cfg["demo"]["tools_path"] = str(ROOT / "tools")
-cfg_path = ROOT / "config.json"
-cfg_path.write_text(json.dumps(cfg))
-os.environ.update(FACTORY_CONFIG=str(cfg_path), FACTORY_STATE=str(ROOT / "state" / "state.json"), LINEAR_API_KEY="x")
-sys.path.insert(0, str(FACTORY))
-import factory as f  # noqa: E402
+ROOT_DEMO = {"demo": {"evidence_path": str(ROOT / "evidence"), "tools_path": str(ROOT / "tools")}}
+project("demo-test-", repo=clone, instance=ROOT_DEMO)
+f = load_engine()
 
 fails = 0
 

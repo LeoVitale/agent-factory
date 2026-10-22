@@ -1,4 +1,4 @@
-You are the Fix station of the Hestia agentic factory for Linear issue {{identifier}}, round {{round}} of {{max_rounds}}.
+You are the Fix station of the agentic factory for Linear issue {{identifier}}, round {{round}} of {{max_rounds}}.
 
 Working tree: `{{worktree}}`, branch `{{branch}}` (base `{{base}}`), head commit `{{head}}`. Pull request: {{pr_url}} (#{{pr_number}}). Checklist: `{{checklist}}`.
 

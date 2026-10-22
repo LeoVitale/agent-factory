@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hestia agentic factory orchestrator.
+"""Agentic factory orchestrator.
 
 Polls Linear and GitHub, runs one OpenHands (Cursor ACP) conversation per
 station - plan, build, verify, judge, fix, demo - and checks each station's
@@ -11,10 +11,10 @@ issue (Socket Mode) and through Linear comments. No LLM runs here.
   FACTORY_DRY_RUN=1             read everything, write nothing
 
 Record the demo of a pull request already in review:
-  touch <state dir>/requests/demo-HES-104
+  touch <state dir>/requests/demo-ENG-104
 
 Run the station an issue stopped at again, in a new conversation:
-  touch <state dir>/requests/retry-HES-114
+  touch <state dir>/requests/retry-ENG-114
 """
 import json
 import logging
@@ -32,10 +32,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import dashboard
+import settings
 
 HERE = Path(__file__).resolve().parent
-CONFIG = json.loads(Path(os.environ.get("FACTORY_CONFIG", HERE / "config.json")).read_text())
-PROMPTS = HERE / "prompts"
+CONFIG = settings.load()
 STATE_PATH = Path(os.environ.get("FACTORY_STATE", "/state/state.json"))
 CANVAS_URL = os.environ.get("CANVAS_URL", "http://canvas:8000").rstrip("/")
 CANVAS_KEY_FILE = Path(os.environ.get("CANVAS_KEY_FILE", "/canvas-state/agent-canvas/api-key.txt"))
@@ -47,7 +47,6 @@ DRY_RUN = os.environ.get("FACTORY_DRY_RUN") == "1"
 
 REPO = CONFIG["repo_path"]
 WORKTREES = Path(CONFIG["worktrees_path"])
-MAX_ROUNDS = CONFIG["max_fix_rounds"]
 MAX_RETRIES = 2
 RETRY_NOTE = ("A previous conversation for this station stopped with a connection error from Cursor (RetriableError) "
               "before it finished. Its work may already be in this working tree: check `git status` and `git log` "
@@ -56,12 +55,8 @@ STATIONS = ("plan", "build", "verify", "judge", "fix", "demo")
 DONE_STAGES = ("review", "merged", "dropped")
 FACTORY_MARK = "[factory]"
 
-DEMO = CONFIG.get("demo", {})
-EVIDENCE = Path(DEMO.get("evidence_path", "/projects/factory-evidence"))
+EVIDENCE = Path(CONFIG["demo"].get("evidence_path", "/projects/factory-evidence"))
 REQUESTS = STATE_PATH.parent / "requests"
-# The anon key every `supabase start` uses unless the project sets its own JWT secret. It is public.
-LOCAL_ANON_KEY = ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9."
-                  "CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0")
 MEDIA_TYPES = {".png": "image/png", ".gif": "image/gif", ".mp4": "video/mp4"}
 _STATE = {"issues": {}}
 
@@ -116,8 +111,24 @@ def mutate(what):
     return True
 
 
+def max_rounds():
+    return CONFIG["max_fix_rounds"]
+
+
+def refresh_config():
+    """Fetch the clone and read `.factory/` again at `config_ref`; a broken kit keeps the last good settings."""
+    run(["git", "fetch", "origin"], check=False)
+    try:
+        fresh = settings.load()
+    except (settings.ConfigError, ValueError, KeyError) as e:
+        log.error("keeping the previous settings: %s", e)
+        return
+    CONFIG.clear()
+    CONFIG.update(fresh)
+
+
 def render(name, **values):
-    text = (PROMPTS / name).read_text()
+    text = settings.prompt(CONFIG, name)
     for key, value in values.items():
         text = text.replace("{{" + key + "}}", str(value))
     return text
@@ -189,34 +200,51 @@ def issue_detail(issue_id):
 FIELD_LINES = {
     "base": re.compile(r"^\s*Base:\s*`([^`\s]+)`", re.M),
     "branch": re.compile(r"^\s*Branch:\s*`([^`\s]+)`", re.M),
-    "task": re.compile(r"^\s*Task:\s*`(\.specs/features/[a-z0-9-]+/tasks/[^`\s]+\.md)`", re.M),
 }
 WAIT_PRS = re.compile(r"Start only after pull requests?\s+((?:#\d+(?:\s*,\s*|\s+and\s+)?)+)", re.I)
-DEBT_FILE = re.compile(r"docs/tech-debt/TD-[A-Z]+-\d+-[a-z0-9-]+\.md")
+
+
+def artifact(key, feature):
+    """A path from the project's `artifacts` config, for one feature."""
+    return CONFIG["artifacts"][key].replace("{feature}", feature)
+
+
+def feature_dir(feature):
+    """The folder the tasks and the checklists of a feature share, e.g. `.specs/features/<feature>`."""
+    return os.path.commonpath([artifact("tasks", feature), artifact("checks", feature)])
+
+
+def task_line():
+    before, _, after = CONFIG["artifacts"]["tasks"].partition("{feature}")
+    return re.compile(r"^\s*Task:\s*`(" + re.escape(before) + r"[a-z0-9-]+" + re.escape(after) + r"[^`\s]+\.md)`", re.M)
 
 
 def tech_debt_source(text):
-    """The single tech-debt record an issue cites, or None when it cites none or more than one."""
-    paths = list(dict.fromkeys(DEBT_FILE.findall(text or "")))
+    """The single tech-debt record an issue cites, or None when it cites none, more than one, or the project
+    has no tech-debt records."""
+    debt = CONFIG["artifacts"].get("debt")
+    if not debt:
+        return None
+    paths = list(dict.fromkeys(m.group(0) for m in re.finditer(debt["pattern"], text or "")))
     return paths[0] if len(paths) == 1 else None
 
 
 def feature_from_debt(path):
-    """`docs/tech-debt/TD-WEB-01-….md` becomes the folder name `td-web-01`."""
-    match = re.fullmatch(r"docs/tech-debt/(TD-[A-Z]+-\d+)-[a-z0-9-]+\.md", path)
-    return match.group(1).lower()
+    """The record's id, the pattern's first group, names the folder: `TD-WEB-01` becomes `td-web-01`."""
+    return re.fullmatch(CONFIG["artifacts"]["debt"]["pattern"], path).group(1).lower()
 
 
 def issue_fields(description):
     """The Base, Branch, Task and "Start only after pull request #N" lines an issue may carry.
 
-    A description that never names `.specs/features/<feature>/` still gets a folder when it cites
-    exactly one `docs/tech-debt/TD-<ID>-….md`. The folder is `<id>` in lowercase. Two records, or
-    none, leave the feature empty so pickup refuses the issue.
+    A description that never names a feature folder still gets one when it cites exactly one tech-debt
+    record. The folder is the record's id in lowercase. Two records, or none, leave the feature empty so
+    pickup refuses the issue.
     """
     text = description or ""
     fields = {key: (m.group(1) if (m := rx.search(text)) else None) for key, rx in FIELD_LINES.items()}
-    feature = re.search(r"\.specs/features/([a-z0-9-]+)/", fields["task"] or text)
+    fields["task"] = (m.group(1) if (m := task_line().search(text)) else None)
+    feature = re.search(CONFIG["artifacts"]["feature"], fields["task"] or text)
     fields["feature"] = feature.group(1) if feature else None
     fields["debt_source"] = None
     if not fields["feature"]:
@@ -346,7 +374,7 @@ def plural(n, one, many):
 def pipeline(rec):
     """The progress line of the thread root: done steps ticked, the current one bold, the rest grey."""
     steps = ["plan", "build"] + (["fix"] if rec.get("round") else []) + ["verify", "judge", "ci"]
-    steps += (["demo"] if DEMO.get("enabled") else []) + ["review"]
+    steps += (["demo"] if CONFIG['demo'].get("enabled") else []) + ["review"]
     stage = rec["stage"]
     at = rec.get("waiting_stage") if stage == "waiting" else stage
     if at == "final":
@@ -359,7 +387,7 @@ def pipeline(rec):
     for i, step in enumerate(steps):
         emoji, name = LOOK[step]
         if step == "fix":
-            name = f"Fix {rec['round']}/{MAX_ROUNDS}"
+            name = f"Fix {rec['round']}/{max_rounds()}"
         if i < pos:
             out.append(f"{'⏭️' if step == 'plan' and not planned else '✅'} {name}")
         elif i > pos:
@@ -440,7 +468,7 @@ def root_text(rec):
     facts = [note] if (note := root_note(rec)) else []
     facts.append(f"🔗 <{rec['pr_url']}|PR #{rec['pr_number']}>" if rec.get("pr_url") else "🔗 Sem PR ainda")
     if rec.get("round"):
-        facts.append(f"🔧 Correções: {rec['round']} de {MAX_ROUNDS}")
+        facts.append(f"🔧 Correções: {rec['round']} de {max_rounds()}")
     return (f"*<{rec['issue_url']}|{rec['identifier']} · {esc(rec['title'])}>*\n"
             f"{pipeline(rec)}\n" + " · ".join(facts))
 
@@ -720,13 +748,19 @@ def pr_checks(rec, head):
         else:
             out["fail"].append(f"{r['name']} ({r['conclusion']})")
     for s in gh_json("api", f"repos/{repo}/commits/{head}/status", cwd=rec["worktree"])["statuses"]:
-        description = (s.get("description") or "").lower()
-        if s["state"] == "failure" and s["context"].startswith("Vercel") and "rate limited" in description:
+        if s["state"] == "failure" and ci_ignored(s):
             out["pass"].append(s["context"])
             continue
         bucket = {"success": "pass", "pending": "pending"}.get(s["state"], "fail")
         out[bucket].append(s["context"])
     return out
+
+
+def ci_ignored(status):
+    """A failing commit status the project's `ci.ignore` rules say is not about the change, such as a rate limit."""
+    description = (status.get("description") or "").lower()
+    return any(status["context"].startswith(rule.get("context_prefix", ""))
+               and rule.get("description_contains", "").lower() in description for rule in CONFIG["ci_ignore"])
 
 
 def judge_verdict(rec, head):
@@ -754,13 +788,15 @@ CI_NOTE = ("The GitHub token here cannot read the Checks API, so `gh pr checks` 
 
 
 def paths(rec):
-    feature = f".specs/features/{rec['feature']}"
+    feature = feature_dir(rec["feature"])
     checklist = rec.get("checklist") or ""
     return dict(ci_note=CI_NOTE, identifier=rec["identifier"], issue_url=rec["issue_url"], worktree=rec["worktree"],
                 branch=rec["branch"], base=rec["base"], feature=rec["feature"], tasks_file=rec.get("tasks_file", ""),
                 checklist=checklist, verified=checklist[:-3] + ".verified.md" if checklist else "",
                 pr_url=rec.get("pr_url", ""), pr_number=rec.get("pr_number", ""),
-                round=rec.get("round", 0), max_rounds=MAX_ROUNDS, feature_dir=feature)
+                round=rec.get("round", 0), max_rounds=max_rounds(), feature_dir=feature,
+                tasks_dir=artifact("tasks", rec["feature"]), checks_dir=artifact("checks", rec["feature"]),
+                discovery=artifact("discovery", rec["feature"]))
 
 
 def debt_note(rec):
@@ -772,8 +808,8 @@ def debt_note(rec):
     return (
         "\n## Tech-debt source\n\n"
         f"This issue cites `{source}` and does not name a feature folder. "
-        f"Before planning, if `.specs/features/{feature}/discovery.md` does not exist, "
-        f"copy `{source}` to that path. Leave `{source}` in `docs/tech-debt/`. "
+        f"Before planning, if `{artifact('discovery', feature)}` does not exist, "
+        f"copy `{source}` to that path. Leave `{source}` in `{os.path.dirname(source)}/`. "
         "Do not overwrite an existing `discovery.md`. "
         f"If `{source}` is missing from the worktree, stop with `needs_human`. "
         "Commit the copy together with the tasks file. Do not push.\n"
@@ -808,23 +844,27 @@ def start_judge(rec, head):
 def start_fix(rec, reason, head, why):
     """`reason` instructs the agent; `why` tells the person, in Slack, what the round fixes."""
     rec["round"] = rec.get("round", 0) + 1
-    if rec["round"] > MAX_ROUNDS:
-        rec["round"] = MAX_ROUNDS
+    if rec["round"] > max_rounds():
+        rec["round"] = max_rounds()
         rec["rounds_exhausted"] = True
-        raise Stop(f"No `APPROVE` after {MAX_ROUNDS} fix rounds. Last failure: {reason}")
+        raise Stop(f"No `APPROVE` after {max_rounds()} fix rounds. Last failure: {reason}")
     rec["fix_from"] = head
     start_station(rec, "fix", render("fix.md", head=head, reason=reason, result=result_block(), **paths(rec)),
-                  title=f"Correção {rec['round']} de {MAX_ROUNDS}", detail=why)
+                  title=f"Correção {rec['round']} de {max_rounds()}", detail=why)
 
 
 # ── demo ──────────────────────────────────────────────────────────────────────
 
-def demo_key():
-    return os.environ.get("DEMO_SUPABASE_ANON_KEY") or DEMO.get("supabase_anon_key") or LOCAL_ANON_KEY
+def demo_vars():
+    """The project's demo variables; `DEMO_VAR_<NAME>` in the environment replaces one, for a value kept out of git."""
+    values = dict(CONFIG["demo"].get("vars") or {})
+    for key in values:
+        values[key] = os.environ.get(f"DEMO_VAR_{key.upper()}", values[key])
+    return values
 
 
 def demo_busy():
-    return sum(r["stage"] == "demo" for r in _STATE["issues"].values()) >= DEMO.get("max_parallel", 1)
+    return sum(r["stage"] == "demo" for r in _STATE["issues"].values()) >= CONFIG['demo'].get("max_parallel", 1)
 
 
 def start_demo(rec, head, back):
@@ -835,17 +875,16 @@ def start_demo(rec, head, back):
     if mutate(f"create {demo_dir}"):
         demo_dir.mkdir(parents=True, exist_ok=True)
     rec.update(demo_for=head, demo_back=back, demo_dir=str(demo_dir))
-    kit = HERE / "demo-kit.mjs"
-    if kit.is_file() and mutate("install the demo kit"):
-        tools = Path(DEMO.get("tools_path", "/projects/.demo-tools"))
+    kit = settings.demo_kit(CONFIG)
+    if kit is not None and mutate("install the demo kit"):
+        tools = Path(CONFIG['demo'].get("tools_path", "/projects/.demo-tools"))
         tools.mkdir(parents=True, exist_ok=True)
-        (tools / kit.name).write_text(kit.read_text())
+        (tools / "demo-kit.mjs").write_text(kit)
     rec.pop("demo_wait_noticed", None)
     issue = issue_detail(rec["issue_id"])
     start_station(rec, "demo", render(
         "demo.md", head=head, base_sha=base_sha, demo_dir=demo_dir, before_worktree=f"{rec['worktree']}-before",
-        supabase_url=DEMO.get("supabase_url", "http://host.docker.internal:54321"), supabase_anon_key=demo_key(),
-        port_before=DEMO.get("port_before", 5181), port_after=DEMO.get("port_after", 5182), issue=issue_block(issue),
+        **demo_vars(), port_before=CONFIG['demo'].get("port_before", 5181), port_after=CONFIG['demo'].get("port_after", 5182), issue=issue_block(issue),
         result=result_block(extra_fields=', "manifest": "<path of manifest.json>"'), **paths(rec)))
 
 
@@ -859,7 +898,7 @@ def load_manifest(demo_dir):
     except json.JSONDecodeError as e:
         raise Stop(f"`{path}` is not valid JSON: {e}") from None
     root = demo_dir.resolve()
-    limit = DEMO.get("max_file_mb", 50)
+    limit = CONFIG['demo'].get("max_file_mb", 50)
 
     def check(name, suffixes):
         if not name:
@@ -967,14 +1006,14 @@ def publish_linear(rec, manifest, demo_dir):
 # carries its own vercel.json that turns its deployments off.
 EVIDENCE_BRANCH_FILES = {
     "vercel.json": json.dumps({"git": {"deploymentEnabled": False}}, indent=2) + "\n",
-    "README.md": "# factory-evidence\n\nScreenshots and videos the Hestia factory records for pull request review.\n"
+    "README.md": "# factory-evidence\n\nScreenshots and videos the agentic factory records for pull request review.\n"
                  "Media only: never merge this branch, and nothing here is deployed.\n",
 }
 
 
 def push_evidence(rec, files, demo_dir):
     """Commit the demo files to the evidence branch with a private index, never touching a work tree."""
-    branch = DEMO.get("evidence_branch", "factory-evidence")
+    branch = CONFIG['demo'].get("evidence_branch", "factory-evidence")
     prefix = f"{rec['identifier']}/{rec['demo_for'][:12]}"
     for _ in range(3):
         run(["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"], check=False)
@@ -1088,8 +1127,8 @@ def take_requests(state):
 def after_plan(rec, result):
     tasks = result.get("tasks_file", "")
     require_tracked(rec, tasks)
-    if not tasks.startswith(f".specs/features/{rec['feature']}/tasks/"):
-        raise Stop(f"The tasks file `{tasks}` is outside `.specs/features/{rec['feature']}/tasks/`.")
+    if not tasks.startswith(artifact("tasks", rec["feature"])):
+        raise Stop(f"The tasks file `{tasks}` is outside `{artifact('tasks', rec['feature'])}`.")
     blocks, go_live = blocking_unresolved(Path(rec["worktree"]) / tasks)
     if blocks:
         raise Stop("The plan has blocking Unresolved questions:\n" + "\n".join(f"- {q}" for q in blocks))
@@ -1105,8 +1144,8 @@ def after_build(rec, result):
         return start_build(rec, handoff=True)
     checklist = result.get("checklist", "")
     require_tracked(rec, checklist)
-    if not checklist.startswith(f".specs/features/{rec['feature']}/checks/") or checklist.endswith(".verified.md"):
-        raise Stop(f"The checklist `{checklist}` is outside `.specs/features/{rec['feature']}/checks/`.")
+    if not checklist.startswith(artifact("checks", rec["feature"])) or checklist.endswith(".verified.md"):
+        raise Stop(f"The checklist `{checklist}` is outside `{artifact('checks', rec['feature'])}`.")
     rec["checklist"] = checklist
     head = require_clean_and_pushed(rec)
     prs = gh_json("pr", "list", "--head", rec["branch"], "--base", rec["base"], "--state", "open",
@@ -1118,10 +1157,11 @@ def after_build(rec, result):
                 f"<{blob(head, checklist)}|📋 Checklist>")
     comment(rec, f"🔨 **Build done.** Draft pull request: [PR #{rec['pr_number']}]({rec['pr_url']})")
     changed = git("diff", "--name-only", f"origin/{rec['base']}...HEAD", cwd=rec["worktree"]).splitlines()
-    schema = [f for f in changed if any(f.startswith(p) for p in CONFIG["schema_paths"])]
+    guard = CONFIG["schema_guard"]
+    schema = [f for f in changed if any(f.startswith(p) for p in guard["paths"])]
     if schema and not rec.get("schema_acknowledged"):
         rec["schema_acknowledged"] = True
-        raise Stop("This change touches schema or RLS (" + ", ".join(schema[:5]) + "), and `pnpm run test:rls` "
+        raise Stop("This change touches schema or RLS (" + ", ".join(schema[:5]) + f"), and `{guard['command']}` "
                    "cannot run in the sandbox. Run it locally and reply with the result.")
     sync_then_verify(rec, head)
 
@@ -1172,7 +1212,7 @@ def check_final(rec):
             raise Stop("No CI checks reported on the head commit.")
         return
     rec.pop("final_ci_since", None)
-    if DEMO.get("enabled") and rec.get("demo_head") != head:
+    if CONFIG['demo'].get("enabled") and rec.get("demo_head") != head:
         if not demo_busy():
             return start_demo(rec, head, "final")
         if not rec.get("demo_wait_noticed"):
@@ -1227,7 +1267,7 @@ def after_judge(rec, result):
         return start_fix(rec, f"the-judge returned {verdict}. Address the review at {url}.", head,
                          why=f"responde à <{url}|revisão> da Judge.")
     notify(rec, f"✅ *Judge aprovou*. <{url}|📝 Ver a revisão>\n🚦 Agora confiro o CI do commit aprovado"
-                + (", e depois vem a Demo." if DEMO.get("enabled") else "."))
+                + (", e depois vem a Demo." if CONFIG['demo'].get("enabled") else "."))
     rec["stage"] = "final"
     check_final(rec)
 
@@ -1394,13 +1434,13 @@ def fix_after_answer(rec, replies):
         return stop_for_human(rec, str(stop))
     answers = "\n\n".join(f"The person answered through {r['source']}:\n\n{quote(r['text'])}" for r in replies)
     reason = (f"The Verifier returned FAIL. Read `{paths(rec)['verified']}` for the failing checks. The factory "
-              f"stopped after {MAX_ROUNDS} fix rounds, and the person answered.\n\n{answers}\n\n"
+              f"stopped after {max_rounds()} fix rounds, and the person answered.\n\n{answers}\n\n"
               f"First, add a comment on Linear issue {rec['identifier']} with this answer translated to English. "
               f"Start the comment with `[factory] 📨 Answer from the person (via {replies[0]['source']}):`. "
               "Use the Linear MCP. Then fix what failed, following the answer.")
     for key in ("waiting_stage", "question", "rounds_exhausted", "base_syncs"):
         rec.pop(key, None)
-    rec["round"] = MAX_ROUNDS - 1
+    rec["round"] = max_rounds() - 1
     set_needs_human(rec, False)
     notify(rec, "📨 *Recebi sua resposta*: abro mais uma rodada de 🔧 Fix com ela, sem voltar ao Verify.")
     start_fix(rec, reason, head, why="corrige o que o Verify reprovou, seguindo a sua resposta.")
@@ -1428,7 +1468,7 @@ def deliver_replies(rec):
         rec.pop("waiting_stage", None)
         rec["stage"] = rec["conversations"][-1]["station"]
         if rec.pop("rounds_exhausted", False):
-            rec["round"] = MAX_ROUNDS - 1
+            rec["round"] = max_rounds() - 1
         rec.pop("base_syncs", None)
         set_needs_human(rec, False)
     notify(rec, f"📨 *Recebi sua resposta*: o {badge(rec['stage'])} continua.")
@@ -1546,8 +1586,9 @@ def pickup(state):
             continue
         rec = new_record(issue)
         if not rec.get("feature"):
-            refuse(rec, "the description must name the feature folder as `.specs/features/<feature>/`.",
-                   "a descrição precisa citar a pasta da feature, como `.specs/features/<feature>/`.")
+            folder = feature_dir("<feature>") + "/"
+            refuse(rec, f"the description must name the feature folder as `{folder}`.",
+                   f"a descrição precisa citar a pasta da feature, como `{folder}`.")
             continue
         if rec["branch"] == rec["base"] or rec["branch"] in ("main", "master"):
             refuse(rec, f"`Branch:` `{rec['branch']}` is the base. Name a branch of its own.",
@@ -1590,6 +1631,7 @@ IDLE_STAGES = DONE_STAGES + ("waiting", "blocked", "queued")
 
 def tick(state):
     with LOCK:
+        refresh_config()
         _STATE["issues"] = state["issues"]
         live = [r for r in state["issues"].values() if r["stage"] not in IDLE_STAGES]
         for rec in live:

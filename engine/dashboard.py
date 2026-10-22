@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only dashboard of the Hestia factory.
+"""Read-only dashboard of one factory instance.
 
 Shows every issue on the pipeline, the pull requests, the stops that need the person and the station
 metrics. It reads the factory's state file, the Canvas and GitHub, and writes nothing. The factory starts
@@ -21,8 +21,10 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import settings
+
 HERE = Path(__file__).resolve().parent
-CONFIG = json.loads(Path(os.environ.get("FACTORY_CONFIG", HERE / "config.json")).read_text())
+CONFIG = settings.load()
 STATE_PATH = Path(os.environ.get("FACTORY_STATE", "/state/state.json"))
 CANVAS_URL = os.environ.get("CANVAS_URL", "http://canvas:8000").rstrip("/")
 CANVAS_KEY_FILE = Path(os.environ.get("CANVAS_KEY_FILE", "/canvas-state/agent-canvas/api-key.txt"))

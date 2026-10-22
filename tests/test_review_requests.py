@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline tests for the final CI check and for change requests on an issue in review.
 
-  python3 tools/agent-factory/factory/tests/test_review_requests.py tools/agent-factory/factory
+  python3 tests/test_review_requests.py
 
 Every call that reaches Linear, GitHub or Slack is replaced; nothing leaves the machine.
 """
@@ -11,13 +11,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-FACTORY = Path(sys.argv[1]).resolve()
-os.environ["FACTORY_STATE"] = os.path.join(tempfile.mkdtemp(prefix="review-test-"), "state.json")
-os.environ.setdefault("LINEAR_API_KEY", "x")
-sys.path.insert(0, str(FACTORY))
-spec = importlib.util.spec_from_file_location("factory", FACTORY / "factory.py")
-f = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(f)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tests.helpers import TEMPLATES, load_engine, project, sh  # noqa: E402
+
+project("review-test-")
+f = load_engine()
 calls = []
 f.notify = lambda rec, text, human=False: calls.append(("notify", text))
 f.comment = lambda rec, body: calls.append(("comment", body))
@@ -27,7 +25,7 @@ f.require_clean_and_pushed = lambda rec: "HEAD1"
 f.base_is_merged = lambda rec: True
 f.start_demo = lambda rec, head, back: calls.append(("demo", head))
 f.mutate = lambda what: True
-f.DEMO = {}
+f.CONFIG["demo"] = {}
 
 
 def fake_fix(rec, reason, head, why):

@@ -1,4 +1,4 @@
-You are the Judge station of the Hestia agentic factory for Linear issue {{identifier}}.
+You are the Judge station of the agentic factory for Linear issue {{identifier}}.
 
 Working tree: `{{worktree}}`, branch `{{branch}}` (base `{{base}}`), head commit `{{head}}`. Pull request: {{pr_url}} (#{{pr_number}}).
 

@@ -11,6 +11,6 @@
   "acp_session_mode": null,
   "acp_prompt_timeout": 1800.0,
   "acp_startup_timeout": 90.0,
-  "acp_command": "python3 /home/openhands/.openhands/bin/cursor-acp-params.py --model grok-4.7 --set context=500k --set reasoning_effort=medium --set fast=true -- /Users/vitale/.local/bin/agent acp",
+  "acp_command": "python3 /home/openhands/.openhands/bin/cursor-acp-params.py --model grok-4.7 --set context=500k --set reasoning_effort=medium --set fast=true -- /usr/local/bin/agent acp",
   "acp_args": null
 }

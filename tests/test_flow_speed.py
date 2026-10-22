@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline tests for the speed changes: a profile per station, the quick pass between ticks, the demo kit.
 
-  python3 tools/agent-factory/factory/tests/test_flow_speed.py tools/agent-factory/factory
+  python3 tests/test_flow_speed.py
 """
 import json
 import os
@@ -9,15 +9,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-FACTORY = Path(sys.argv[1]).resolve()
-ROOT = Path(tempfile.mkdtemp(prefix="speed-test-"))
-cfg = json.loads((FACTORY / "config.json").read_text())
-cfg["demo"]["tools_path"] = str(ROOT / "tools")
-cfg["demo"]["evidence_path"] = str(ROOT / "evidence")
-(ROOT / "config.json").write_text(json.dumps(cfg))
-os.environ.update(FACTORY_CONFIG=str(ROOT / "config.json"), FACTORY_STATE=str(ROOT / "state" / "state.json"), LINEAR_API_KEY="x")
-sys.path.insert(0, str(FACTORY))
-import factory as f  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tests.helpers import TEMPLATES, load_engine, project, sh  # noqa: E402
+
+ROOT, CLONE = project("speed-test-", instance={"agent_profile_id": "default-profile", "station_profiles": {"demo": "demo-profile"}})
+(CLONE / ".factory" / "demo-kit.mjs").write_text("// demo kit\n")
+sh("git", "add", ".factory", cwd=CLONE)
+sh("git", "commit", "-qm", "demo kit", cwd=CLONE)
+cfg = {"agent_profile_id": "default-profile", "station_profiles": {"demo": "demo-profile"}}
+f = load_engine()
 
 fails = 0
 
@@ -69,13 +69,13 @@ demo_rec = {"identifier": "HES-1", "issue_id": "i", "worktree": str(ROOT), "base
             "branch": "feat/x", "stage": "final"}
 f.start_demo(demo_rec, "f" * 40, "final")
 kit = ROOT / "tools" / "demo-kit.mjs"
-check("demo kit installed", kit.is_file() and kit.read_text() == (FACTORY / "demo-kit.mjs").read_text())
+check("demo kit installed", kit.is_file() and kit.read_text() == (CLONE / ".factory" / "demo-kit.mjs").read_text())
 check("demo started with the demo profile", posts[-1]["agent_profile_id"] == cfg["station_profiles"]["demo"])
 
 # the prompts no longer wait for CI
-build, fix = (FACTORY / "prompts" / "build.md").read_text(), (FACTORY / "prompts" / "fix.md").read_text()
+build, fix = (TEMPLATES / "prompts" / "build.md").read_text(), (TEMPLATES / "prompts" / "fix.md").read_text()
 check("build and fix do not wait for CI", "iterate" not in build and "iterate" not in fix and "Do not wait for CI" in build + fix)
-check("demo prompt points at the kit", "demo-kit.mjs" in (FACTORY / "prompts" / "demo.md").read_text())
+check("demo prompt points at the kit", "demo-kit.mjs" in (TEMPLATES / "prompts" / "demo.md").read_text())
 
 print("FAILURES:", fails)
 sys.exit(1 if fails else 0)

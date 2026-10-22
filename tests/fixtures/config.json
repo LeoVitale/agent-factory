@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "linear": {
+    "team_key": "ENG",
+    "states": { "ready": "Ready for agent", "progress": "In Progress", "review": "In review" },
+    "label": "factory",
+    "needs_human_label": "factory:needs-human"
+  },
+  "github_repo": "acme/widget",
+  "base_branch": "main",
+  "artifacts": {
+    "feature": "\\.specs/features/([a-z0-9-]+)/",
+    "tasks": ".specs/features/{feature}/tasks/",
+    "checks": ".specs/features/{feature}/checks/",
+    "discovery": ".specs/features/{feature}/discovery.md",
+    "debt": { "pattern": "docs/tech-debt/(TD-[A-Z]+-\\d+)-[a-z0-9-]+\\.md", "folder": "lowercase" }
+  },
+  "schema_guard": { "paths": ["db/"], "command": "make db-test" },
+  "ci": { "ignore": [{ "context_prefix": "Vercel", "description_contains": "rate limited" }] },
+  "slack": { "channel_prefix": "acme-", "default_channel": "acme-factory", "project_channels": {} },
+  "limits": { "max_fix_rounds": 3, "max_base_syncs": 3, "max_active": 3 },
+  "demo": {
+    "enabled": true,
+    "max_parallel": 1,
+    "max_file_mb": 50,
+    "evidence_branch": "factory-evidence",
+    "port_before": 5181,
+    "port_after": 5182,
+    "vars": {
+      "install": "npm ci",
+      "start_app": "npm run dev -- --port $PORT",
+      "data_rules": "only the local stack at http://host.docker.internal:54321."
+    }
+  }
+}

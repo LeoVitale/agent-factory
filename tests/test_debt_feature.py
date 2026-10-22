@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A tech-debt record names the feature folder when the issue does not.
 
-  python3 tools/agent-factory/factory/tests/test_debt_feature.py tools/agent-factory/factory
+  python3 tests/test_debt_feature.py
 """
 import json
 import os
@@ -9,13 +9,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-FACTORY = Path(sys.argv[1]).resolve()
-ROOT = Path(tempfile.mkdtemp(prefix="debt-feature-"))
-cfg = json.loads((FACTORY / "config.json").read_text())
-(ROOT / "config.json").write_text(json.dumps(cfg))
-os.environ.update(FACTORY_CONFIG=str(ROOT / "config.json"), FACTORY_STATE=str(ROOT / "state" / "state.json"), LINEAR_API_KEY="x")
-sys.path.insert(0, str(FACTORY))
-import factory as f  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tests.helpers import TEMPLATES, load_engine, project, sh  # noqa: E402
+
+ROOT, _ = project("debt-feature-")
+f = load_engine()
 
 fails = 0
 SOURCE = "docs/tech-debt/TD-WEB-01-erros-de-carregamento-e-mutacao-sao-engolidos-nos-dois-apps.md"

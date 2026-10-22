@@ -19,7 +19,7 @@ Prompts and responses pass through untouched. The log only records config change
 Profile "Command" example:
   python3 /home/openhands/.openhands/bin/cursor-acp-params.py --model grok-4.7
       --set context=500k --set reasoning_effort=xhigh --set fast=true
-      -- /Users/vitale/.local/bin/agent acp
+      -- /usr/local/bin/agent acp
 """
 import copy
 import itertools

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline test: an issue's first station reaches the channel, later stations stay in the thread.
 
-  python3 tools/agent-factory/factory/tests/test_channel_broadcast.py tools/agent-factory/factory
+  python3 tests/test_channel_broadcast.py
 """
 import importlib.util
 import os
@@ -9,14 +9,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-FACTORY = Path(sys.argv[1]).resolve()
-os.environ["FACTORY_STATE"] = os.path.join(tempfile.mkdtemp(prefix="broadcast-test-"), "state.json")
-os.environ.setdefault("LINEAR_API_KEY", "x")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tests.helpers import TEMPLATES, load_engine, project, sh  # noqa: E402
+
+project("broadcast-test-")
 os.environ.setdefault("SLACK_BOT_TOKEN", "x")
-sys.path.insert(0, str(FACTORY))
-spec = importlib.util.spec_from_file_location("factory", FACTORY / "factory.py")
-f = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(f)
+f = load_engine()
 
 posts = []
 f.slack = lambda method, **p: posts.append((method, p)) or {"ts": "1.0"}

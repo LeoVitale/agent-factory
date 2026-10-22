@@ -1,6 +1,6 @@
 ## How to finish
 
-Follow `AGENTS.md`, including the Agent cycle section on the factory. Do not merge. Do not move the Linear status. Do not post to Slack. Do not deploy, run `supabase db push`, or touch hosted data.
+Follow `AGENTS.md`, including the Agent cycle section on the factory. Do not merge. Do not move the Linear status. Do not post to Slack. Do not deploy or touch hosted data.
 
 When you stop, for any reason, end your final message with exactly one line:
 
