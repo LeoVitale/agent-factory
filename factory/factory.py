@@ -192,14 +192,38 @@ FIELD_LINES = {
     "task": re.compile(r"^\s*Task:\s*`(\.specs/features/[a-z0-9-]+/tasks/[^`\s]+\.md)`", re.M),
 }
 WAIT_PRS = re.compile(r"Start only after pull requests?\s+((?:#\d+(?:\s*,\s*|\s+and\s+)?)+)", re.I)
+DEBT_FILE = re.compile(r"docs/tech-debt/TD-[A-Z]+-\d+-[a-z0-9-]+\.md")
+
+
+def tech_debt_source(text):
+    """The single tech-debt record an issue cites, or None when it cites none or more than one."""
+    paths = list(dict.fromkeys(DEBT_FILE.findall(text or "")))
+    return paths[0] if len(paths) == 1 else None
+
+
+def feature_from_debt(path):
+    """`docs/tech-debt/TD-WEB-01-….md` becomes the folder name `td-web-01`."""
+    match = re.fullmatch(r"docs/tech-debt/(TD-[A-Z]+-\d+)-[a-z0-9-]+\.md", path)
+    return match.group(1).lower()
 
 
 def issue_fields(description):
-    """The Base, Branch, Task and "Start only after pull request #N" lines an issue may carry."""
+    """The Base, Branch, Task and "Start only after pull request #N" lines an issue may carry.
+
+    A description that never names `.specs/features/<feature>/` still gets a folder when it cites
+    exactly one `docs/tech-debt/TD-<ID>-….md`. The folder is `<id>` in lowercase. Two records, or
+    none, leave the feature empty so pickup refuses the issue.
+    """
     text = description or ""
     fields = {key: (m.group(1) if (m := rx.search(text)) else None) for key, rx in FIELD_LINES.items()}
     feature = re.search(r"\.specs/features/([a-z0-9-]+)/", fields["task"] or text)
     fields["feature"] = feature.group(1) if feature else None
+    fields["debt_source"] = None
+    if not fields["feature"]:
+        source = tech_debt_source(text)
+        if source:
+            fields["feature"] = feature_from_debt(source)
+            fields["debt_source"] = source
     waits = WAIT_PRS.search(text)
     fields["wait_prs"] = [int(n) for n in re.findall(r"#(\d+)", waits.group(1))] if waits else []
     return fields
@@ -735,9 +759,26 @@ def paths(rec):
                 round=rec.get("round", 0), max_rounds=MAX_ROUNDS, feature_dir=feature)
 
 
+def debt_note(rec):
+    """Tell Plan to copy the tech-debt record into the feature folder. Empty when the issue already named one."""
+    source = rec.get("debt_source")
+    if not source:
+        return ""
+    feature = rec["feature"]
+    return (
+        "\n## Tech-debt source\n\n"
+        f"This issue cites `{source}` and does not name a feature folder. "
+        f"Before planning, if `.specs/features/{feature}/discovery.md` does not exist, "
+        f"copy `{source}` to that path. Leave `{source}` in `docs/tech-debt/`. "
+        "Do not overwrite an existing `discovery.md`. "
+        f"If `{source}` is missing from the worktree, stop with `needs_human`. "
+        "Commit the copy together with the tasks file. Do not push.\n"
+    )
+
+
 def start_plan(rec):
     issue = issue_detail(rec["issue_id"])
-    start_station(rec, "plan", render("plan.md", issue=issue_block(issue), result=result_block(
+    start_station(rec, "plan", render("plan.md", issue=issue_block(issue), debt_note=debt_note(rec), result=result_block(
         extra_fields=', "tasks_file": "<path of the tasks file>"'), **paths(rec)))
 
 
@@ -1438,6 +1479,8 @@ def new_record(issue):
     if fields["feature"]:
         rec.update(feature=fields["feature"],
                    branch=fields["branch"] or f"feat/{fields['feature']}-{issue['identifier'].lower()}")
+    if fields.get("debt_source"):
+        rec["debt_source"] = fields["debt_source"]
     return rec
 
 

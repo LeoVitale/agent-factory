@@ -10,7 +10,7 @@ Use the `tlc-plan` skill to turn this issue into tasks. Its source is the issue 
 - `tlc-plan` refuses rather than guesses. A question only the person can settle goes in `Unresolved` with its `Kind`. If any row is `blocks`, stop with `needs_human`.
 - Commit the tasks file on `{{branch}}` with a Conventional Commit. Do not push.
 - Do not write code. Do not run `tlc-implement`.
-
+{{debt_note}}
 ## The issue
 
 {{issue}}
