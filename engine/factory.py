@@ -720,6 +720,10 @@ def pr_checks(rec, head):
         else:
             out["fail"].append(f"{r['name']} ({r['conclusion']})")
     for s in gh_json("api", f"repos/{repo}/commits/{head}/status", cwd=rec["worktree"])["statuses"]:
+        description = (s.get("description") or "").lower()
+        if s["state"] == "failure" and s["context"].startswith("Vercel") and "rate limited" in description:
+            out["pass"].append(s["context"])
+            continue
         bucket = {"success": "pass", "pending": "pending"}.get(s["state"], "fail")
         out[bucket].append(s["context"])
     return out
@@ -1231,7 +1235,12 @@ def after_judge(rec, result):
 def after_fix(rec, result):
     head = require_clean_and_pushed(rec)
     if head == rec.get("fix_from"):
-        raise Stop("The fix station finished without a new commit.")
+        checks = pr_checks(rec, head)
+        if checks["fail"] or checks["pending"] or not checks["pass"]:
+            raise Stop("The fix station finished without a new commit.")
+        notify(rec, "📨 *Correção sem commit*: o head continua. O que restava no CI não é defeito deste PR.")
+        rec["stage"] = "final"
+        return check_final(rec)
     notify(rec, f"📤 *Correção {rec['round']} enviada* (`{head[:8]}`): Verify e Judge rodam de novo, e o CI roda depois do APPROVE.")
     sync_then_verify(rec, head)
 
