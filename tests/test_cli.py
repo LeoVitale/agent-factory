@@ -327,8 +327,11 @@ class SetupTest(CliCase):
         self.assertEqual(canvas["environment"]["GIT_AUTHOR_NAME"], "Sam Example")
         self.assertEqual(canvas["environment"]["GIT_AUTHOR_EMAIL"], "sam@example.com")
         self.assertIn(f"{fake_home}/.claude/skills:{fake_home}/.claude/skills:ro", canvas["volumes"])
-        # The engine clone may sit anywhere; nothing else may name the real home of whoever runs the test.
-        self.assertNotIn(real_home, json.dumps(compose).replace(str(ROOT), "<engine>"))
+        # Host-side values only: container paths such as `home:/home/openhands` are fixed by the image, and the
+        # engine clone may sit anywhere. Nothing else may name the real home of whoever runs the test.
+        host_side = [canvas["build"], canvas["environment"], canvas["env_file"],
+                     [v.split(":")[0] for v in canvas["volumes"]]]
+        self.assertNotIn(real_home, json.dumps(host_side).replace(str(ROOT), "<engine>"))
 
 
 class CoexistTest(CliCase):
