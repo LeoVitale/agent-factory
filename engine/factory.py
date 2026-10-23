@@ -497,6 +497,18 @@ def root_text(rec):
             f"{pipeline(rec)}\n" + " · ".join(facts))
 
 
+def to_channel(human, broadcast):
+    """Whether a thread reply also shows in the channel, by the project's `slack.broadcast`: `all` sends the stops for
+    the person and the `broadcast` replies, `needs_you` only the stops, `none` nothing. A stop still mentions the
+    person, and Slack notifies a mention inside a thread."""
+    mode = CONFIG["slack"].get("broadcast", "all")
+    if mode == "none":
+        return False
+    if mode == "needs_you":
+        return human
+    return human or broadcast
+
+
 def notify(rec, text, human=False, broadcast=False):
     """Post a station update in the issue thread. A stop for the person mentions them and reaches the channel;
     `broadcast` sends the reply to the channel too, without the mention."""
@@ -510,7 +522,7 @@ def notify(rec, text, human=False, broadcast=False):
         if human and SLACK_PERSON:
             text = f"<@{SLACK_PERSON}> {text}"
         slack("chat.postMessage", channel=rec["slack_channel"], thread_ts=rec["slack_ts"],
-              text=text, reply_broadcast=human or broadcast)
+              text=text, reply_broadcast=to_channel(human, broadcast))
         slack("chat.update", channel=rec["slack_channel"], ts=rec["slack_ts"], text=root_text(rec))
     except Exception:
         log.error("Slack failed for %s:\n%s", rec["identifier"], traceback.format_exc())

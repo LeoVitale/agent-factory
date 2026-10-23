@@ -53,12 +53,14 @@ In the project's folder:
 
 ## Plan approval and Slack language
 
-Two keys in `.factory/config.json` change how the factory talks to you:
+Three keys in `.factory/config.json` change how the factory talks to you:
 
 - `"plan_approval": true` makes Build wait for you. When Plan finishes, the issue thread explains the plan, and you reply in the thread or on the Linear issue. A reply of `aprovo`, `entendi`, `ok`, `approve` or `got it` starts Build. Any other reply goes back to Plan as a change request, and Plan asks for approval again. An issue whose `Task:` file is already on the base skips Plan, and the approval with it. Without the key, Build starts as soon as Plan finishes.
 - `"slack": {"language": "pt-BR"}` or `"en"` picks the language of the Slack thread. Without it, Slack speaks Portuguese. Linear and GitHub comments stay in English.
 
-Both take effect on the next tick once they are pushed to `config_ref`.
+- `"slack": {"broadcast": "none"}` keeps every reply in the issue thread, so the channel shows only each issue's first message. `"needs_you"` also posts to the channel the replies that need you: plan approval, stops and "ready for review". `"all"` adds the start of the first station and the merge; it is what a project without the key gets. A reply that needs you mentions you in every mode, and Slack notifies a mention inside a thread.
+
+All three take effect on the next tick once they are pushed to `config_ref`.
 
 ## Tests
 

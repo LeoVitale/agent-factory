@@ -28,6 +28,7 @@
   },
   "slack": {
     "language": "pt-BR",
+    "broadcast": "none",
     "channel_prefix": "factory-",
     "default_channel": "factory",
     "project_channels": {}
