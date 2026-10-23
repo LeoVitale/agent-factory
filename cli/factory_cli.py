@@ -19,7 +19,7 @@ from pathlib import Path
 
 ENGINE_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES = ENGINE_ROOT / "templates" / "factory"
-IMAGE = "agent-sandbox/agent-canvas-cursor:1.29.0"
+IMAGE = "agent-sandbox/agent-canvas-cursor:1.31.0"
 CANVAS_PROJECT = "agent-sandbox"
 CANVAS_PORT = 8200
 FIRST_PORT = 8202
