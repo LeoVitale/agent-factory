@@ -39,6 +39,7 @@ def fake_canvas(method, path, body=None):
 
 
 f.canvas = fake_canvas
+f.profile_secrets = lambda profile: {}
 f.notify = lambda *a, **k: None
 rec = {"identifier": "HES-1", "worktree": str(ROOT), "stage": "queued"}
 

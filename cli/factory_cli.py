@@ -207,7 +207,9 @@ def canvas_compose(values, skills):
            # RTK looks for a Claude Code hook because ~/.claude exists; the agents here use the Cursor hook.
            "RTK_SUPPRESS_HOOK_WARNING": "1",
            # The Cursor CLI reads its own skills from the mounted folders instead of the managed catalog.
-           "OH_ACP_SKILL_SOURCING": "native"}
+           "OH_ACP_SKILL_SOURCING": "native",
+           # The Claude Code ACP adapter runs the Claude Code the image pins, not the older one it bundles.
+           "CLAUDE_CODE_EXECUTABLE": "/opt/claude-code/bin/claude"}
     volumes = ["home:/home/openhands", f"{home()}/openhands-state:/home/openhands/.openhands",
                f"{home()}/projects:/projects", f"{runtime}/cursor-mcp.json:/opt/sandbox/cursor-mcp.json:ro",
                f"{runtime}/claude-mcp.json:/opt/sandbox/claude-mcp.json:ro"] + [f"{d}:{d}:ro" for d in skills]

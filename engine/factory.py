@@ -27,6 +27,7 @@ import threading
 import time
 import traceback
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -39,6 +40,8 @@ CONFIG = settings.load()
 STATE_PATH = Path(os.environ.get("FACTORY_STATE", "/state/state.json"))
 CANVAS_URL = os.environ.get("CANVAS_URL", "http://canvas:8000").rstrip("/")
 CANVAS_KEY_FILE = Path(os.environ.get("CANVAS_KEY_FILE", "/canvas-state/agent-canvas/api-key.txt"))
+# The Canvas as the Canvas server itself reaches it, for the secret lookups it runs.
+CANVAS_SELF_URL = "http://127.0.0.1:8000"
 LINEAR_KEY = os.environ.get("LINEAR_API_KEY", "")
 SLACK_BOT = os.environ.get("SLACK_BOT_TOKEN", "")
 SLACK_APP = os.environ.get("SLACK_APP_TOKEN", "")
@@ -542,6 +545,19 @@ def canvas(method, path, body=None):
     return http(method, CANVAS_URL + path, {"X-Session-API-Key": CANVAS_KEY_FILE.read_text().strip()}, body)
 
 
+def profile_secrets(profile_id):
+    """References to the saved secrets a Canvas profile lists in `secret_refs`, for a new conversation. The Canvas
+    hands saved secrets only to conversations its own UI starts, and an ACP profile receives its provider credential
+    only when it lists it. The server reads each value itself, so the factory never holds one."""
+    names = {p["id"]: p["name"] for p in canvas("GET", "/api/agent-profiles")["profiles"]}
+    if profile_id not in names:
+        return {}
+    refs = canvas("GET", f"/api/agent-profiles/{urllib.parse.quote(names[profile_id])}")["profile"].get("secret_refs")
+    key = CANVAS_KEY_FILE.read_text().strip()
+    return {name: {"kind": "LookupSecret", "url": f"{CANVAS_SELF_URL}/api/settings/secrets/{urllib.parse.quote(name)}",
+                   "headers": {"X-Session-API-Key": key}} for name in refs or []}
+
+
 def event_count(conv_id):
     return canvas("GET", f"/api/conversations/{conv_id}/events/count")
 
@@ -570,6 +586,7 @@ def start_station(rec, station, prompt, title=None, detail=None, retry=False):
         "worktree": False,
         "autotitle": False,
         "tags": {"factory": rec["identifier"].lower(), "station": station},
+        "secrets": profile_secrets(profile),
         "initial_message": {"role": "user", "content": [{"type": "text", "text": prompt}], "run": True},
     })
     rec["conversation_id"] = out["id"]
@@ -1328,11 +1345,13 @@ def start_mention(state, m):
           "so keep links clickable: never wrap a URL in asterisks or backticks.\n\n" + MENTION_RULES)
     workspace = CONFIG["mentions"]["workspace"]
     Path(workspace).mkdir(parents=True, exist_ok=True)
+    profile = CONFIG.get("station_profiles", {}).get("mention", CONFIG["agent_profile_id"])
     out = canvas("POST", "/api/conversations", {
-        "agent_profile_id": CONFIG.get("station_profiles", {}).get("mention", CONFIG["agent_profile_id"]),
+        "agent_profile_id": profile,
         "workspace": {"kind": "LocalWorkspace", "working_dir": workspace},
         "worktree": False,
         "tags": {"factory": "slack-mention"},
+        "secrets": profile_secrets(profile),
         "agent_launch_additions": {"system_message_suffix_append": MENTION_RULES},
         "initial_message": {"role": "user", "content": [{"type": "text", "text": prompt}], "run": True},
     })

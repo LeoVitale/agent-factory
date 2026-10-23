@@ -32,6 +32,12 @@ RUN curl -fsSL -o /tmp/rtk.tar.gz \
  && rm /tmp/rtk.tar.gz \
  && rtk --version
 
+# Claude Code for the Claude Code ACP profile. The ACP adapter bundles an older Claude Code that newer models
+# refuse; CLAUDE_CODE_EXECUTABLE points it at this pinned release instead.
+ARG CLAUDE_CODE_VERSION=2.1.308
+RUN /acp-node/bin/npm install -g --prefix /opt/claude-code "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+ && /opt/claude-code/bin/claude --version
+
 # Slack Socket Mode client for the factory orchestrator.
 RUN python3 -m pip install --no-cache-dir slack_sdk==3.35.0
 

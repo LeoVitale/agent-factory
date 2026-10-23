@@ -19,6 +19,7 @@ f = load_engine()
 posts = []
 f.slack = lambda method, **p: posts.append((method, p)) or {"ts": "1.0"}
 f.canvas = lambda m, path, body=None: {"id": f"conv{len(posts)}"}
+f.profile_secrets = lambda profile: {}
 f.mutate = lambda what: True
 f.root_text = lambda r: "root"
 rec = {"identifier": "HES-9", "slack_channel": "C1", "slack_ts": "0.1", "stage": "blocked", "worktree": "/tmp"}
