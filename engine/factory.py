@@ -34,6 +34,7 @@ from pathlib import Path
 
 import dashboard
 import settings
+from messages import APPROVALS, LANGUAGES, MESSAGES
 
 HERE = Path(__file__).resolve().parent
 CONFIG = settings.load()
@@ -347,6 +348,7 @@ LOOK = {
     "review": ("👀", "Review"),
     "merged": ("🎉", "Merged"),
     "waiting": ("🙋", "Needs you"),
+    "approval": ("✋", "Approval"),
     "dropped": ("🚪", "Out"),
     "refused": ("⛔", "Refused"),
 }
@@ -355,6 +357,23 @@ LOOK = {
 def badge(stage):
     emoji, name = LOOK.get(stage, ("▪️", str(stage).capitalize()))
     return f"{emoji} {name}"
+
+
+def language():
+    """The Slack language the project picked; Portuguese when it picked none, as before the setting existed."""
+    lang = CONFIG["slack"].get("language", "pt-BR")
+    return lang if lang in LANGUAGES else "pt-BR"
+
+
+def say(key, **values):
+    """A Slack message in the project's language."""
+    return MESSAGES[key][language()].format(**values)
+
+
+def word(key, n):
+    """`n` and the counted word, singular or plural, in the project's language."""
+    one, many = MESSAGES[key][language()]
+    return f"{n} {one if n == 1 else many}"
 
 
 def esc(text):
@@ -376,7 +395,8 @@ def plural(n, one, many):
 
 def pipeline(rec):
     """The progress line of the thread root: done steps ticked, the current one bold, the rest grey."""
-    steps = ["plan", "build"] + (["fix"] if rec.get("round") else []) + ["verify", "judge", "ci"]
+    steps = ["plan"] + (["approval"] if CONFIG["plan_approval"] else []) + ["build"]
+    steps += (["fix"] if rec.get("round") else []) + ["verify", "judge", "ci"]
     steps += (["demo"] if CONFIG['demo'].get("enabled") else []) + ["review"]
     stage = rec["stage"]
     at = rec.get("waiting_stage") if stage == "waiting" else stage
@@ -392,7 +412,7 @@ def pipeline(rec):
         if step == "fix":
             name = f"Fix {rec['round']}/{max_rounds()}"
         if i < pos:
-            out.append(f"{'⏭️' if step == 'plan' and not planned else '✅'} {name}")
+            out.append(f"{'⏭️' if step in ('plan', 'approval') and not planned else '✅'} {name}")
         elif i > pos:
             out.append(f"⚪ {name}")
         elif stage == "waiting":
@@ -409,13 +429,14 @@ def pipeline(rec):
 def root_note(rec):
     stage = rec["stage"]
     if stage == "waiting":
-        return f"🙋 Esperando você no {badge(rec.get('waiting_stage'))}"
+        return say("root.waiting", stage=badge(rec.get("waiting_stage")))
     if stage == "blocked":
-        return "🚧 Esperando " + (", ".join(rec.get("blocked_on") or []) or "outras entregas")
+        return say("root.blocked", what=", ".join(rec.get("blocked_on") or []) or say("root.blocked_other"))
     if stage == "merged":
-        return f"🎉 Mergeado em `{rec['base']}`"
-    return {"queued": "⏳ Na fila", "final": "✅ Aprovado pela Judge", "review": "👀 Pronto para sua revisão",
-            "dropped": "🚪 Saiu da factory", "refused": "⛔ Não começou: falta algo na descrição"}.get(stage)
+        return say("root.merged", base=rec["base"])
+    if stage in ("approval", "queued", "final", "review", "dropped", "refused"):
+        return say(f"root.{stage}")
+    return None
 
 
 # ── Slack ─────────────────────────────────────────────────────────────────────
@@ -469,9 +490,9 @@ def invite_person(channel):
 
 def root_text(rec):
     facts = [note] if (note := root_note(rec)) else []
-    facts.append(f"🔗 <{rec['pr_url']}|PR #{rec['pr_number']}>" if rec.get("pr_url") else "🔗 Sem PR ainda")
+    facts.append(f"🔗 <{rec['pr_url']}|PR #{rec['pr_number']}>" if rec.get("pr_url") else say("root.no_pr"))
     if rec.get("round"):
-        facts.append(f"🔧 Correções: {rec['round']} de {max_rounds()}")
+        facts.append(say("root.rounds", round=rec["round"], max=max_rounds()))
     return (f"*<{rec['issue_url']}|{rec['identifier']} · {esc(rec['title'])}>*\n"
             f"{pipeline(rec)}\n" + " · ".join(facts))
 
@@ -562,16 +583,6 @@ def event_count(conv_id):
     return canvas("GET", f"/api/conversations/{conv_id}/events/count")
 
 
-STARTS = {
-    "plan": "transforma a issue em tarefas com critérios que dá para conferir.",
-    "build": "implementa as tarefas, roda as provas do checklist e abre um PR em rascunho.",
-    "verify": "um agente que não escreveu o código refaz cada prova do checklist.",
-    "judge": "um agente revisa o PR com a skill the-judge e dá o veredito.",
-    "fix": "corrige o que a última etapa apontou.",
-    "demo": "grava prints de antes e depois e um vídeo por caso de uso.",
-}
-
-
 def start_station(rec, station, prompt, title=None, detail=None, retry=False):
     """`title` and `detail` replace the station's usual Slack line, for a fix round or a handoff. A `retry` runs the
     same station again in a new conversation and keeps its original prompt and retry count."""
@@ -599,8 +610,8 @@ def start_station(rec, station, prompt, title=None, detail=None, retry=False):
                                                 **({"retry": True} if retry else {})})
     emoji, name = LOOK[station]
     # The thread may have been opened long ago, while the issue waited; the first station also reaches the channel.
-    notify(rec, f"{emoji} *{title or name + ' começou'}*: {detail or STARTS[station]}\n"
-                f"<{CONFIG['canvas_public_url']}/conversations/{out['id']}|👀 Acompanhar ao vivo>", broadcast=first)
+    notify(rec, f"{emoji} *{title or say('station.started', name=name)}*: {detail or say('start.' + station)}\n"
+                f"<{CONFIG['canvas_public_url']}/conversations/{out['id']}|{say('station.follow')}>", broadcast=first)
 
 
 def send_to_conversation(rec, text):
@@ -630,13 +641,12 @@ def retry_station(rec, error=None):
     name = LOOK[rec["stage"]][1]
     if error:
         rec["retries"] = rec.get("retries", 0) + 1
-        detail = (f"a conversa anterior caiu por erro de conexão do Cursor (`{esc(error[:120])}`). Uma conversa nova, "
-                  f"com um processo novo do Cursor, segue com o mesmo pedido (tentativa {rec['retries']} de "
-                  f"{MAX_RETRIES}). Não conta como rodada de correção.")
+        detail = say("retry.error", error=esc(error[:120]), attempt=rec["retries"], max=MAX_RETRIES)
     else:
         rec["retries"] = 0
-        detail = "a seu pedido, uma conversa nova, com um processo novo do Cursor, segue com o mesmo pedido."
-    start_station(rec, rec["stage"], RETRY_NOTE + rec["prompt"], title=f"{name} recomeçou", detail=detail, retry=True)
+        detail = say("retry.asked")
+    start_station(rec, rec["stage"], RETRY_NOTE + rec["prompt"], title=say("station.restarted", name=name),
+                  detail=detail, retry=True)
     return None
 
 
@@ -728,7 +738,7 @@ def sync_with_base(rec):
         run(["git", "merge", "--abort"], cwd=wt, check=False)
         raise Conflict(files or ["(git reported a failed merge)"])
     git("push", "origin", f"HEAD:{branch}", cwd=wt)
-    notify(rec, f"🔄 *Base atualizada*: trouxe o `{base}` mais recente para `{branch}`.")
+    notify(rec, say("base.updated", base=base, branch=branch))
     return git("rev-parse", "HEAD", cwd=wt)
 
 
@@ -833,10 +843,28 @@ def debt_note(rec):
     )
 
 
+LANGUAGE_NAMES = {"pt-BR": "Brazilian Portuguese", "en": "English"}
+
+
+def plan_brief():
+    """What Plan adds to its result when the person approves plans: the explanation they read in Slack."""
+    return ("\n## Explain the plan to the person\n\n"
+            "The person approves this plan in Slack before Build starts. In the FACTORY_RESULT line, add "
+            f"`\"summary\"`: a clear explanation, written in {LANGUAGE_NAMES[language()]}, of everything that will be "
+            "done for this issue: what changes for the people who use it, the tasks in order and what each one "
+            "delivers, the parts of the code it touches, what stays out of scope, and any open question or risk. "
+            "Plain language, short bullet lines, at most 2,500 characters. Write each line break as `\\n`, so the "
+            "result stays on one line.\n")
+
+
 def start_plan(rec):
     issue = issue_detail(rec["issue_id"])
-    start_station(rec, "plan", render("plan.md", issue=issue_block(issue), debt_note=debt_note(rec), result=result_block(
-        extra_fields=', "tasks_file": "<path of the tasks file>"'), **paths(rec)))
+    fields = ', "tasks_file": "<path of the tasks file>"'
+    if CONFIG["plan_approval"]:
+        fields += ', "summary": "<the explanation of the plan for the person>"'
+    prompt = render("plan.md", issue=issue_block(issue), debt_note=debt_note(rec),
+                    result=result_block(extra_fields=fields), **paths(rec))
+    start_station(rec, "plan", prompt + (plan_brief() if CONFIG["plan_approval"] else ""))
 
 
 def start_build(rec, handoff=False):
@@ -845,9 +873,7 @@ def start_build(rec, handoff=False):
             f"`{rec.get('checklist')}`. Do not redo landed slices.") if handoff else ""
     start_station(rec, "build", render("build.md", issue=issue_block(issue), handoff=note, result=result_block(
         extra_status=" | handoff", extra_fields=', "checklist": "<path of the checklist>"'), **paths(rec)),
-        **(dict(title="Build continua", detail="a conversa anterior encheu o contexto e passou o bastão. "
-                                               "Uma conversa nova segue do ponto marcado no checklist.")
-           if handoff else {}))
+        **(dict(title=say("build.continues"), detail=say("build.handoff")) if handoff else {}))
 
 
 def start_verify(rec, head):
@@ -867,7 +893,7 @@ def start_fix(rec, reason, head, why):
         raise Stop(f"No `APPROVE` after {max_rounds()} fix rounds. Last failure: {reason}")
     rec["fix_from"] = head
     start_station(rec, "fix", render("fix.md", head=head, reason=reason, result=result_block(), **paths(rec)),
-                  title=f"Correção {rec['round']} de {max_rounds()}", detail=why)
+                  title=say("fix.round", round=rec["round"], max=max_rounds()), detail=why)
 
 
 # ── demo ──────────────────────────────────────────────────────────────────────
@@ -1095,9 +1121,8 @@ def after_demo(rec, result):
     rec["demo_head"] = head
     rec.setdefault("demos", []).append({"head": head, "linear": linear_url, "github": github_url, "at": now()})
     shots = sum(len(s.get("shots") or []) for s in manifest["screens"])
-    notify(rec, f"🎬 *Demo pronta*: {plural(shots, 'comparação', 'comparações')} de antes e depois e "
-                f"{plural(len(manifest['videos']), 'vídeo', 'vídeos')}.\n"
-                f"<{linear_url}|▶️ Assistir no Linear> · <{github_url}|🖼️ Ver no PR>")
+    notify(rec, say("demo.ready", shots=word("word.comparison", shots), videos=word("word.video", len(manifest["videos"])),
+                    linear_url=linear_url, github_url=github_url))
     rec["stage"] = rec.pop("demo_back", "final")
     if rec["stage"] == "final":
         check_final(rec)
@@ -1150,9 +1175,42 @@ def after_plan(rec, result):
     if blocks:
         raise Stop("The plan has blocking Unresolved questions:\n" + "\n".join(f"- {q}" for q in blocks))
     rec["tasks_file"] = tasks
-    notify(rec, f"✅ *Plan pronto*: `{tasks}`."
-                + (f"\n⚠️ *Bloqueia o go-live*: {esc('; '.join(go_live))}" if go_live else ""))
-    start_build(rec)
+    go_live_note = "\n" + say("plan.go_live", items=esc("; ".join(go_live))) if go_live else ""
+    if not CONFIG["plan_approval"]:
+        notify(rec, say("plan.ready", tasks=tasks) + go_live_note)
+        return start_build(rec)
+    # Build waits for the person: the plan is explained in the thread, and their reply approves it or changes it.
+    rec["stage"] = "approval"
+    rec["waiting_since"] = now()
+    summary = esc(result.get("summary") or "").strip() or say("plan.no_summary")
+    notify(rec, say("plan.approval", summary=summary, tasks=tasks) + go_live_note, human=True)
+    comment(rec, f"📋 **Plan ready for your approval.** Tasks file: `{tasks}`. Reply in the Slack thread, or here, with "
+                 "`approve` to start Build, or with the changes you want.")
+
+
+def is_approval(text):
+    """A reply that is nothing but an approval word, ignoring mentions, case and closing punctuation."""
+    plain = re.sub(r"<@\w+>", "", text or "").strip().lower().rstrip(".!")
+    return plain in APPROVALS
+
+
+def handle_approval(rec):
+    """The person's reply to a plan: an approval starts Build; anything else goes back to Plan as a change request."""
+    replies = rec.pop("inbox", []) + linear_replies(rec)
+    if not replies:
+        return
+    rec.pop("waiting_since", None)
+    if all(is_approval(r["text"]) for r in replies):
+        notify(rec, say("plan.approved"))
+        return start_build(rec)
+    changes = "\n\n".join(f"Via {r['source']}:\n\n{quote(r['text'])}" for r in replies if not is_approval(r["text"]))
+    notify(rec, say("plan.revise"))
+    rec["stage"] = "plan"
+    send_to_conversation(rec, (
+        f"The person asked for changes to the plan:\n\n{changes}\n\n"
+        f"First, add a comment on Linear issue {rec['identifier']} with this request translated to English. Start the "
+        "comment with `[factory] 📝 Plan change requested:`. Use the Linear MCP. Then update the tasks file, commit "
+        "it, and finish exactly as your first message describes, with the FACTORY_RESULT line and a new summary."))
 
 
 def after_build(rec, result):
@@ -1170,8 +1228,7 @@ def after_build(rec, result):
     if not prs:
         raise Stop(f"No open pull request from `{rec['branch']}` into `{rec['base']}`.")
     rec["pr_number"], rec["pr_url"] = prs[0]["number"], prs[0]["url"]
-    notify(rec, f"✅ *Build pronto*: PR em rascunho <{rec['pr_url']}|#{rec['pr_number']}> aberto. "
-                f"<{blob(head, checklist)}|📋 Checklist>")
+    notify(rec, say("build.ready", pr_url=rec["pr_url"], pr_number=rec["pr_number"], checklist_url=blob(head, checklist)))
     comment(rec, f"🔨 **Build done.** Draft pull request: [PR #{rec['pr_number']}]({rec['pr_url']})")
     changed = git("diff", "--name-only", f"origin/{rec['base']}...HEAD", cwd=rec["worktree"]).splitlines()
     guard = CONFIG["schema_guard"]
@@ -1192,8 +1249,8 @@ def sync_then_verify(rec, head):
         return start_fix(rec, f"Merging `origin/{rec['base']}` into `{rec['branch']}` conflicts in "
                               f"{', '.join(files)}. Merge `origin/{rec['base']}`, resolve the conflicts "
                               "keeping the intent of both sides, run the affected proofs, commit and push.", head,
-                         why=f"trazer o `{rec['base']}` mais recente conflita em "
-                             + ", ".join(f"`{f}`" for f in files[:5]) + (" e outros" if len(files) > 5 else "") + ".")
+                         why=say("base.conflict", base=rec["base"], files=", ".join(f"`{f}`" for f in files[:5])
+                                 + (say("base.and_more") if len(files) > 5 else "")))
     start_verify(rec, head)
 
 
@@ -1205,8 +1262,7 @@ def check_final(rec):
         if rec["base_syncs"] > CONFIG["max_base_syncs"]:
             raise Stop(f"`{rec['base']}` kept moving after review {CONFIG['max_base_syncs']} times. "
                        "Reply to merge it once more and run Verify and Judge again.")
-        notify(rec, f"🔄 *O `{rec['base']}` andou depois da revisão*: vou trazer as mudanças, "
-                    "e Verify e Judge rodam de novo.")
+        notify(rec, say("base.moved", base=rec["base"]))
         return sync_then_verify(rec, head)
     pr = gh_json("pr", "view", str(rec["pr_number"]), "--json", "mergeable,headRefOid", cwd=rec["worktree"])
     if pr["headRefOid"] != head or pr["mergeable"] == "UNKNOWN":
@@ -1214,12 +1270,12 @@ def check_final(rec):
     if pr["mergeable"] == "CONFLICTING":
         return start_fix(rec, f"GitHub reports that the pull request conflicts with `{rec['base']}`. "
                               f"Merge `origin/{rec['base']}`, resolve the conflicts, commit and push.", head,
-                         why=f"o GitHub aponta conflito entre o PR e o `{rec['base']}`.")
+                         why=say("final.pr_conflict", base=rec["base"]))
     checks = pr_checks(rec, head)
     if checks["fail"]:
         rec.pop("final_ci_since", None)
         return start_fix(rec, "CI failing on the head commit: " + ", ".join(checks["fail"]), head,
-                         why="o CI falhou em " + ", ".join(checks["fail"]) + " no commit final.")
+                         why=say("final.ci_failed", checks=", ".join(checks["fail"])))
     if checks["pending"]:
         return
     if not checks["pass"]:
@@ -1234,7 +1290,7 @@ def check_final(rec):
             return start_demo(rec, head, "final")
         if not rec.get("demo_wait_noticed"):
             rec["demo_wait_noticed"] = True
-            notify(rec, "⏳ *Demo na fila*: outra demo está gravando agora. Esta começa assim que ela terminar.")
+            notify(rec, say("demo.queued"))
         return
     demo = next((d for d in reversed(rec.get("demos", [])) if d["head"] == head), None)
     if mutate(f"mark PR #{rec['pr_number']} ready"):
@@ -1248,11 +1304,9 @@ def check_final(rec):
                  + f"🔗 Pull request: [{pr_link}]({rec['pr_url']})\n\n"
                  + ("Approve the feature from the demo, then review the pull request." if demo
                     else "Review the pull request.") + " Merging is up to you.")
-    notify(rec, f"🎉 *Pronto para sua revisão!* A Judge aprovou o <{rec['pr_url']}|{pr_link}>."
-                + (f"\n🎬 Demo: <{demo['linear']}|▶️ assistir no Linear> · <{demo['github']}|🖼️ ver no PR>"
-                   if demo else "")
-                + ("\n👉 Aprove a feature pela demo e revise o PR." if demo else "\n👉 Revise o PR.")
-                + " O merge é com você.", human=True)
+    notify(rec, say("review.ready", pr_url=rec["pr_url"], pr_link=pr_link)
+                + (say("review.demo", linear=demo["linear"], github=demo["github"]) if demo else "")
+                + say("review.next_demo" if demo else "review.next"), human=True)
 
 
 def after_verify(rec, result):
@@ -1262,16 +1316,13 @@ def after_verify(rec, result):
     if git("log", "-1", "--format=%H", "--", verified, cwd=rec["worktree"]) != head:
         raise Stop(f"`{verified}` is not the last commit, so it does not verify the head.")
     report = (Path(rec["worktree"]) / verified).read_text()
-    report_link = f"<{blob(head, verified)}|📄 Relatório>"
+    report_link = f"<{blob(head, verified)}|{say('verify.report')}>"
     if re.search(r"\*\*Verdict\*\*:\s*PASS", report):
-        notify(rec, f"✅ *Verify passou*: todas as provas do checklist conferem. {report_link}")
+        notify(rec, say("verify.pass", report=report_link))
         return start_judge(rec, head)
-    notify(rec, f"❌ *Verify reprovou*: algumas provas não conferem. {report_link}")
+    notify(rec, say("verify.fail", report=report_link))
     start_fix(rec, f"The Verifier returned FAIL. Read `{verified}` for the failing checks.", head,
-              why="corrige as provas que o Verify reprovou, a partir do relatório.")
-
-
-JUDGE_SAYS = {"REQUEST_CHANGES": ("✋", "pediu mudanças"), "COMMENT": ("💬", "deixou comentários")}
+              why=say("verify.fix_why"))
 
 
 def after_judge(rec, result):
@@ -1279,12 +1330,11 @@ def after_judge(rec, result):
     verdict, url = judge_verdict(rec, head)
     rec["last_review"] = url
     if verdict != "APPROVE":
-        emoji, says = JUDGE_SAYS.get(verdict, ("💬", f"respondeu {verdict}"))
-        notify(rec, f"{emoji} *Judge {says}*. <{url}|📝 Ver a revisão>")
+        key = {"REQUEST_CHANGES": "judge.changes", "COMMENT": "judge.comment"}.get(verdict, "judge.other")
+        notify(rec, say(key, url=url, verdict=verdict))
         return start_fix(rec, f"the-judge returned {verdict}. Address the review at {url}.", head,
-                         why=f"responde à <{url}|revisão> da Judge.")
-    notify(rec, f"✅ *Judge aprovou*. <{url}|📝 Ver a revisão>\n🚦 Agora confiro o CI do commit aprovado"
-                + (", e depois vem a Demo." if CONFIG['demo'].get("enabled") else "."))
+                         why=say("judge.fix_why", url=url))
+    notify(rec, say("judge.approved", url=url, then=say("judge.then_demo" if CONFIG["demo"].get("enabled") else "judge.then_end")))
     rec["stage"] = "final"
     check_final(rec)
 
@@ -1295,10 +1345,10 @@ def after_fix(rec, result):
         checks = pr_checks(rec, head)
         if checks["fail"] or checks["pending"] or not checks["pass"]:
             raise Stop("The fix station finished without a new commit.")
-        notify(rec, "📨 *Correção sem commit*: o head continua. O que restava no CI não é defeito deste PR.")
+        notify(rec, say("fix.no_commit"))
         rec["stage"] = "final"
         return check_final(rec)
-    notify(rec, f"📤 *Correção {rec['round']} enviada* (`{head[:8]}`): Verify e Judge rodam de novo, e o CI roda depois do APPROVE.")
+    notify(rec, say("fix.sent", round=rec["round"], head=head[:8]))
     sync_then_verify(rec, head)
 
 
@@ -1359,7 +1409,7 @@ def start_mention(state, m):
         "conversation_id": out["id"], "channel": m["channel"], "thread": m["thread"],
         "status": "active", "events_mark": 0, "since": time.time()}
     slack("chat.postMessage", channel=m["channel"], thread_ts=m["thread"],
-          text=f"👀 Deixa comigo! <{CONFIG['canvas_public_url']}/conversations/{out['id']}|Acompanhar ao vivo>")
+          text=say("mention.taken", url=f"{CONFIG['canvas_public_url']}/conversations/{out['id']}"))
 
 
 def follow_up_mention(rec, m):
@@ -1388,10 +1438,10 @@ def finish_mention(rec):
         return
     final = canvas("GET", f"/api/conversations/{rec['conversation_id']}/agent_final_response").get("response", "")
     if status in ("error", "stuck"):
-        final = f"🛑 O agente parou com status *{status}*." + (f"\n\n{final}" if final else "")
+        final = say("mention.stopped", status=status) + (f"\n\n{final}" if final else "")
     if mutate(f"post the mention answer in {rec['channel']}/{rec['thread']}"):
         slack("chat.postMessage", channel=rec["channel"], thread_ts=rec["thread"],
-              text=(final or "✅ Feito, sem mensagem final.")[:39000])
+              text=(final or say("mention.empty"))[:39000])
     rec["status"] = "answered"
 
 
@@ -1424,8 +1474,7 @@ def stop_for_human(rec, question):
     rec["waiting_since"] = now()
     rec["question"] = question
     where = badge(rec["waiting_stage"])
-    notify(rec, f"🙋 *Preciso de você* no {where}\n{quote(esc(question))}\n"
-                "💬 Responda aqui na thread ou na issue do Linear.", human=True)
+    notify(rec, say("human.needed", stage=where, question=quote(esc(question))), human=True)
     set_needs_human(rec, True)
     comment(rec, f"🙋 **Needs you at {where}**\n\n{quote(question)}\n\n"
                  "Reply here or in the Slack thread, and the station picks it up.")
@@ -1461,8 +1510,8 @@ def fix_after_answer(rec, replies):
         rec.pop(key, None)
     rec["round"] = max_rounds() - 1
     set_needs_human(rec, False)
-    notify(rec, "📨 *Recebi sua resposta*: abro mais uma rodada de 🔧 Fix com ela, sem voltar ao Verify.")
-    start_fix(rec, reason, head, why="corrige o que o Verify reprovou, seguindo a sua resposta.")
+    notify(rec, say("reply.fix_round"))
+    start_fix(rec, reason, head, why=say("reply.fix_why"))
 
 
 def deliver_replies(rec):
@@ -1477,7 +1526,7 @@ def deliver_replies(rec):
             rec.pop("waiting_stage", None)
             rec["stage"] = "blocked"
             set_needs_human(rec, False)
-            notify(rec, "📨 *Recebi sua resposta*: vou conferir a issue de novo.")
+            notify(rec, say("reply.recheck"))
         return
     for reply in replies:
         send_to_conversation(rec, render("answer.md", source=reply["source"], answer=reply["text"],
@@ -1490,7 +1539,7 @@ def deliver_replies(rec):
             rec["round"] = max_rounds() - 1
         rec.pop("base_syncs", None)
         set_needs_human(rec, False)
-    notify(rec, f"📨 *Recebi sua resposta*: o {badge(rec['stage'])} continua.")
+    notify(rec, say("reply.continues", stage=badge(rec["stage"])))
 
 
 def reopen_from_review(rec):
@@ -1500,8 +1549,8 @@ def reopen_from_review(rec):
         return
     pr = gh_json("pr", "view", str(rec["pr_number"]), "--json", "state", cwd=rec["worktree"])
     if pr["state"] != "OPEN":
-        notify(rec, f"🚪 *Não reabro*: o <{rec['pr_url']}|PR #{rec['pr_number']}> está "
-                    f"{'com merge' if pr['state'] == 'MERGED' else 'fechado'}. Abra uma issue nova para a mudança.")
+        notify(rec, say("review.closed", pr_url=rec["pr_url"], pr_number=rec["pr_number"],
+                        state=say("review.state_merged" if pr["state"] == "MERGED" else "review.state_closed")))
         return
     head = require_clean_and_pushed(rec)
     request = "\n\n".join(re.sub(r"<@\w+>\s*", "", r["text"]).strip(" :") for r in requests)
@@ -1512,14 +1561,13 @@ def reopen_from_review(rec):
     for key in ("rounds_exhausted", "base_syncs", "review_checks", "final_ci_since"):
         rec.pop(key, None)
     rec["round"] = 0
-    notify(rec, f"📝 *Pedido recebido na revisão*: o <{rec['pr_url']}|PR #{rec['pr_number']}> volta para "
-                "rascunho, a issue volta para In Progress e uma rodada de Fix começa com o seu pedido.")
+    notify(rec, say("review.reopen", pr_url=rec["pr_url"], pr_number=rec["pr_number"]))
     start_fix(rec, "The person asked for this change while the pull request was in review (via Slack):\n\n"
                    + quote(request) + "\n\n"
                    f"First, add a comment on Linear issue {rec['identifier']} with this request translated to "
                    "English. Start the comment with `[factory] 📝 Change requested in review (via Slack):`. "
                    "Use the Linear MCP. Then make the change.", head,
-              why="faz o que você pediu aqui na thread.")
+              why=say("review.reopen_why"))
 
 
 def advance(rec):
@@ -1552,12 +1600,11 @@ def new_record(issue):
     return rec
 
 
-def refuse(rec, why, why_pt):
+def refuse(rec, why, why_slack):
     """An issue the factory cannot take; the person fixes the description and removes the label to retry."""
     label = CONFIG["needs_human_label"]
     rec["stage"] = "refused"
-    notify(rec, f"⛔ *Não consigo começar*: {esc(why_pt)}\n"
-                f"👉 Corrija a descrição e remova a label `{label}` para tentar de novo.", human=True)
+    notify(rec, say("refuse", why=esc(why_slack), label=label), human=True)
     set_needs_human(rec, True)
     comment(rec, f"⛔ **Can't start yet:** {why}\n\nFix the description, then remove the `{label}` label to retry.")
 
@@ -1568,15 +1615,14 @@ def begin(rec, issue=None):
     labels = {l["name"] for l in issue["labels"]["nodes"]}
     if issue["state"]["name"] != CONFIG["states"]["ready"] or CONFIG["label"] not in labels:
         rec["stage"] = "dropped"
-        notify(rec, f"🚪 *Saiu da factory*: a issue não está mais em {CONFIG['states']['ready']} "
-                    f"com a label `{CONFIG['label']}`.")
+        notify(rec, say("dropped", ready=CONFIG["states"]["ready"], label=CONFIG["label"]))
         return False
     reasons = open_blockers(issue)
     if reasons:
         rec["stage"] = "blocked"
         if rec.get("blocked_on") != reasons:
             rec["blocked_on"] = reasons
-            notify(rec, "🚧 *Esperando*: " + ", ".join(reasons) + ". Começa sozinha quando estiverem Done ou com merge.")
+            notify(rec, say("blocked", reasons=", ".join(reasons)))
         return False
     if not mutate(f"start {rec['identifier']} on `{rec['branch']}` from `{rec['base']}`"):
         return False
@@ -1590,7 +1636,7 @@ def begin(rec, issue=None):
             rec["stage"] = "plan"
             raise Stop(f"`{task}` has blocking Unresolved questions:\n" + "\n".join(f"- {q}" for q in blocks))
         rec["tasks_file"] = task
-        notify(rec, f"⏭️ *Plan pulado*: `{task}` já está planejado no `{rec['base']}`.")
+        notify(rec, say("plan.skipped", task=task, base=rec["base"]))
         start_build(rec)
     else:
         start_plan(rec)
@@ -1607,16 +1653,16 @@ def pickup(state):
         if not rec.get("feature"):
             folder = feature_dir("<feature>") + "/"
             refuse(rec, f"the description must name the feature folder as `{folder}`.",
-                   f"a descrição precisa citar a pasta da feature, como `{folder}`.")
+                   say("refuse.folder", folder=folder))
             continue
         if rec["branch"] == rec["base"] or rec["branch"] in ("main", "master"):
             refuse(rec, f"`Branch:` `{rec['branch']}` is the base. Name a branch of its own.",
-                   f"a `Branch:` `{rec['branch']}` é a própria base. Use uma branch só desta issue.")
+                   say("refuse.branch", branch=rec["branch"]))
             continue
         if not mutate(f"pick up {issue['identifier']} ({rec['branch']} from {rec['base']})"):
             continue
         state["issues"][issue["identifier"]] = rec
-        notify(rec, f"📥 *Entrou na factory*: parte do `{rec['base']}` na branch `{rec['branch']}`.")
+        notify(rec, say("picked", base=rec["base"], branch=rec["branch"]))
 
 
 def active_count(state):
@@ -1634,8 +1680,7 @@ def fill_slots(state):
                 position += 1
                 if not rec.get("queue_noticed"):
                     rec["queue_noticed"] = True
-                    notify(rec, f"⏳ *Na fila*: posição {position}. Já há {CONFIG['max_active']} issues rodando; "
-                                "esta começa quando uma vaga abrir.")
+                    notify(rec, say("queued", position=position, max=CONFIG["max_active"]))
             continue
         try:
             begin(rec)
@@ -1645,7 +1690,7 @@ def fill_slots(state):
             log.error("%s start failed:\n%s", rec["identifier"], traceback.format_exc())
 
 
-IDLE_STAGES = DONE_STAGES + ("waiting", "blocked", "queued")
+IDLE_STAGES = DONE_STAGES + ("waiting", "approval", "blocked", "queued")
 
 
 def tick(state):
@@ -1660,6 +1705,14 @@ def tick(state):
                 stop_for_human(rec, str(stop))
             except Exception:
                 log.error("%s failed:\n%s", rec["identifier"], traceback.format_exc())
+            save_state(state)
+        for rec in [r for r in state["issues"].values() if r["stage"] == "approval"]:
+            try:
+                handle_approval(rec)
+            except Stop as stop:
+                stop_for_human(rec, str(stop))
+            except Exception:
+                log.error("%s approval failed:\n%s", rec["identifier"], traceback.format_exc())
             save_state(state)
         for rec in (r for r in state["issues"].values() if r["stage"] == "waiting"):
             try:
@@ -1740,8 +1793,8 @@ def announce_merges(state):
             log.info("%s: PR #%s was merged before merge notices started", rec["identifier"], pr["number"])
             continue
         by = (pr.get("mergedBy") or {}).get("login")
-        notify(rec, f"🎉 *PR mergeado!* <{rec['pr_url']}|PR #{rec['pr_number']}> entrou em `{pr['baseRefName']}`"
-                    + (f" por {esc(by)}" if by else "") + ". A issue saiu da factory. Valeu! 🙌", broadcast=True)
+        notify(rec, say("merged", pr_url=rec["pr_url"], pr_number=rec["pr_number"], base=pr["baseRefName"],
+                        by=say("merged.by", who=esc(by)) if by else ""), broadcast=True)
 
 
 def clean_worktrees(state):
@@ -1763,7 +1816,7 @@ def clean_worktrees(state):
             removed = True
         elif why != rec.get("worktree_kept"):
             rec["worktree_kept"] = why
-            notify(rec, f"🧹 *Worktree mantido*: {why} Ele fica em `{rec['worktree']}` até isso ser resolvido.")
+            notify(rec, say("worktree.kept", why=why, path=rec["worktree"]))
     if removed and mutate("prune worktrees"):
         git("worktree", "prune")
 
@@ -1774,9 +1827,9 @@ def clean_worktree(rec):
     if path.exists():
         conv = rec.get("conversation_id")
         if conv and canvas("GET", f"/api/conversations/{conv}").get("execution_status") == "running":
-            return "uma conversa da Canvas ainda está rodando nele."
+            return say("worktree.running")
         if git("status", "--porcelain", cwd=path):
-            return "ele tem mudanças fora de commit."
+            return say("worktree.dirty")
     head = git("rev-parse", f"refs/heads/{branch}") if ref_exists(f"refs/heads/{branch}") else None
     if head:
         # The base takes pull requests as merge commits and GitHub deletes the remote branch, so `git branch -d`
@@ -1784,11 +1837,11 @@ def clean_worktree(rec):
         pr = gh_json("pr", "view", str(rec["pr_number"]), "--repo", CONFIG["github_repo"], "--json", "mergeCommit")
         merge = ((pr or {}).get("mergeCommit") or {}).get("oid")
         if not merge:
-            return f"não achei o merge commit do PR #{rec['pr_number']}."
+            return say("worktree.no_merge", pr_number=rec["pr_number"])
         if run(["git", "cat-file", "-e", f"{merge}^{{commit}}"], check=False).returncode:
             git("fetch", "origin", merge)
         if run(["git", "merge-base", "--is-ancestor", head, merge], check=False).returncode:
-            return f"a branch `{branch}` tem commits que não entraram no PR #{rec['pr_number']}."
+            return say("worktree.unmerged", branch=branch, pr_number=rec["pr_number"])
     if not mutate(f"remove worktree {path} and branch {branch}"):
         return None
     if path.exists():

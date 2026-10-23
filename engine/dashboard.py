@@ -38,10 +38,10 @@ STATIONS = ("plan", "build", "verify", "judge", "fix", "demo")
 FINISHED = ("finished", "error", "stuck", "waiting_for_confirmation")
 LABELS = {
     "queued": "Na fila", "blocked": "Bloqueada", "plan": "Plan", "build": "Build", "ci": "CI", "verify": "Verify",
-    "judge": "Judge", "fix": "Fix", "final": "Checagem final", "demo": "Demo", "review": "Em revisão",
+    "judge": "Judge", "fix": "Fix", "final": "Checagem final", "approval": "Aprovar o plano", "demo": "Demo", "review": "Em revisão",
     "waiting": "Precisa de você", "dropped": "Saiu", "refused": "Recusada", "MERGED": "Mergeado", "merged": "Mergeado", "CLOSED": "PR fechado",
 }
-GROUPS = {"waiting": "needs_you", "refused": "needs_you", "review": "review", "merged": "done", "queued": "later", "blocked": "later",
+GROUPS = {"waiting": "needs_you", "approval": "needs_you", "refused": "needs_you", "review": "review", "merged": "done", "queued": "later", "blocked": "later",
           "dropped": "out"}
 
 

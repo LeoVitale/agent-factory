@@ -66,6 +66,8 @@ def flatten(project):
         "max_base_syncs": limits["max_base_syncs"],
         "max_active": limits["max_active"],
         "demo": project.get("demo") or {"enabled": False},
+        # Build waits for the person to approve what Plan wrote; projects from before the setting run straight on.
+        "plan_approval": bool(project.get("plan_approval", False)),
     }
 
 

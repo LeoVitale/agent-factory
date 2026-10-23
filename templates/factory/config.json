@@ -18,6 +18,7 @@
     "checks": ".specs/features/{feature}/checks/",
     "discovery": ".specs/features/{feature}/discovery.md"
   },
+  "plan_approval": true,
   "schema_guard": {
     "paths": [],
     "command": ""
@@ -26,6 +27,7 @@
     "ignore": []
   },
   "slack": {
+    "language": "pt-BR",
     "channel_prefix": "factory-",
     "default_channel": "factory",
     "project_channels": {}
