@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 status=0
-for t in tests/test_channel_broadcast.py tests/test_ci_after_judge.py tests/test_debt_feature.py \
+for t in tests/test_announce_merges.py tests/test_channel_broadcast.py tests/test_ci_after_judge.py tests/test_debt_feature.py \
          tests/test_demo_station.py tests/test_flow_speed.py tests/test_messages.py tests/test_review_requests.py; do
   if python3 "$t" > /tmp/factory-test.log 2>&1; then echo "ok   $t"; else echo "FAIL $t"; cat /tmp/factory-test.log; status=1; fi
 done

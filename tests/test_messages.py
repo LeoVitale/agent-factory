@@ -118,6 +118,24 @@ f.issue_detail = lambda i: {"comments": {"nodes": [
     {"id": "2", "createdAt": "2030", "user": {"id": "me"}, "body": "Yes, add the seed."}]}}
 got = f.linear_replies(rec_at("waiting", waiting_since="2029"))
 check("factory comments are not replies", [g["text"] for g in got] == ["Yes, add the seed."], got)
+
+# ── a Demo stop that asks for a Fix round does not resume Demo ──
+sent, started = [], []
+f.send_to_conversation = lambda rec, text: sent.append(text)
+f.require_clean_and_pushed = lambda rec: "abc123"
+f.start_fix = lambda rec, reason, head, why: started.append((head, why, "that edit is in scope" in reason))
+r = rec_at("waiting", waiting_stage="demo", conversation_id="demo-1", waiting_since="2099",
+           question="Should that round fix both comments? This needs a Fix round.",
+           inbox=[{"source": "Linear", "text": "Yes. Both nits, and re-pin C6."}])
+f.deliver_replies(r)
+check("demo fix question starts Fix and leaves the demo conversation",
+      started == [("abc123", "faz o que você confirmou para a rodada de Fix.", True)] and sent == []
+      and "question" not in r, started)
+r = rec_at("waiting", waiting_stage="demo", conversation_id="demo-1", conversations=[{"station": "demo"}],
+           waiting_since="2099", question="The local stack is down.",
+           inbox=[{"source": "Linear", "text": "It is up."}])
+f.deliver_replies(r)
+check("other demo answers resume Demo", sent and r["stage"] == "demo", r["stage"])
 answer = (TEMPLATES / "prompts" / "answer.md").read_text()
 check("answer prompt keeps the [factory] mark first", "`[factory] 📨 Answer from the person" in answer)
 

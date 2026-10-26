@@ -1526,12 +1526,37 @@ def fix_after_answer(rec, replies):
     start_fix(rec, reason, head, why=say("reply.fix_why"))
 
 
+def fix_from_demo_answer(rec, replies):
+    """The demo station cannot change the branch. An answer to its Fix-round question starts one."""
+    try:
+        head = require_clean_and_pushed(rec)
+    except Stop as stop:
+        return stop_for_human(rec, str(stop))
+    answers = "\n\n".join(f"The person answered through {r['source']}:\n\n{quote(r['text'])}" for r in replies)
+    reason = ("The Demo station cannot change the branch, so it stopped and asked whether to open a Fix round. "
+              "The person answered. This is that Fix round.\n\n"
+              f"{answers}\n\n"
+              f"First, add a comment on Linear issue {rec['identifier']} with this answer translated to English. "
+              f"Start the comment with `[factory] 📨 Answer from the person (via {replies[0]['source']}):`. "
+              "Use the Linear MCP. Then do what the answer confirms. "
+              "Where the answer explicitly authorizes a checklist edit, that edit is in scope: "
+              "do not stop to ask about it, and do not treat the checklist rule as a block on that edit.")
+    for key in ("waiting_stage", "question", "rounds_exhausted", "base_syncs"):
+        rec.pop(key, None)
+    set_needs_human(rec, False)
+    notify(rec, say("reply.demo_fix"))
+    start_fix(rec, reason, head, why=say("reply.demo_fix_why"))
+
+
 def deliver_replies(rec):
     replies = rec.pop("inbox", []) + linear_replies(rec)
     if not replies:
         return
     if rec["stage"] == "waiting" and rec.get("waiting_stage") == "verify" and rec.get("rounds_exhausted"):
         return fix_after_answer(rec, replies)
+    if (rec["stage"] == "waiting" and rec.get("waiting_stage") == "demo"
+            and "fix round" in (rec.get("question") or "").lower()):
+        return fix_from_demo_answer(rec, replies)
     if not rec.get("conversation_id"):
         # A stop before any conversation (a base or tasks file problem): the answer means "check again".
         if rec["stage"] == "waiting":
@@ -1709,6 +1734,11 @@ def tick(state):
     with LOCK:
         refresh_config()
         _STATE["issues"] = state["issues"]
+        # Before any station resumes: a merged pull request leaves the factory, including one still waiting.
+        try:
+            announce_merges(state)
+        except Exception:
+            log.error("merge check failed:\n%s", traceback.format_exc())
         live = [r for r in state["issues"].values() if r["stage"] not in IDLE_STAGES]
         for rec in live:
             try:
@@ -1731,10 +1761,6 @@ def tick(state):
                 deliver_replies(rec)
             except Exception:
                 log.error("%s reply failed:\n%s", rec["identifier"], traceback.format_exc())
-        try:
-            announce_merges(state)
-        except Exception:
-            log.error("merge check failed:\n%s", traceback.format_exc())
         try:
             clean_worktrees(state)
         except Exception:
@@ -1788,19 +1814,25 @@ def quick_tick(state):
 
 
 def announce_merges(state):
-    """A pull request in review that got merged: its thread hears it once, and the issue leaves the review loops.
-    Merges from before the factory first looked are marked without a message."""
-    review = {r["pr_number"]: r for r in state["issues"].values() if r["stage"] == "review" and r.get("pr_number")}
-    if not review:
+    """A merged pull request leaves the factory, whatever station it was in, including a stop still waiting
+    on the person. The thread hears it once. Merges from before the factory first looked are marked without a message."""
+    open_prs = {r["pr_number"]: r for r in state["issues"].values()
+                if r.get("pr_number") and r["stage"] not in ("merged", "dropped", "refused")}
+    if not open_prs:
         return
     since = datetime.fromisoformat(state.setdefault("merge_notices_since", now()))
     merged = gh_json("pr", "list", "--repo", CONFIG["github_repo"], "--state", "merged", "--limit", "50",
                      "--json", "number,mergedAt,mergedBy,baseRefName") or []
     for pr in merged:
-        rec = review.get(pr["number"])
+        rec = open_prs.get(pr["number"])
         if not rec:
             continue
+        was_waiting = rec["stage"] == "waiting"
         rec.update(stage="merged", merged_at=pr["mergedAt"])
+        for key in ("waiting_stage", "question", "inbox"):
+            rec.pop(key, None)
+        if was_waiting:
+            set_needs_human(rec, False)
         if datetime.fromisoformat(pr["mergedAt"].replace("Z", "+00:00")) < since:
             log.info("%s: PR #%s was merged before merge notices started", rec["identifier"], pr["number"])
             continue
