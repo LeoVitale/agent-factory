@@ -75,6 +75,14 @@ class Stop(Exception):
     """A gate failed in a way only the person can resolve."""
 
 
+class HTTPStatusError(RuntimeError):
+    """A response with an error status; `status` holds it."""
+
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
 # ── plumbing ──────────────────────────────────────────────────────────────────
 
 def now():
@@ -89,7 +97,7 @@ def http(method, url, headers=None, body=None, timeout=60):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read()
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"{method} {url} -> {e.code}: {e.read()[:500]!r}") from None
+        raise HTTPStatusError(f"{method} {url} -> {e.code}: {e.read()[:500]!r}", e.code) from None
     return json.loads(raw) if raw else {}
 
 
@@ -401,7 +409,8 @@ def pipeline(rec):
     steps += (["fix"] if rec.get("round") else []) + ["verify", "judge", "ci"]
     steps += (["demo"] if CONFIG['demo'].get("enabled") else []) + ["review"]
     stage = rec["stage"]
-    at = rec.get("waiting_stage") if stage == "waiting" else stage
+    # A queued issue that already ran a station waits for a slot at the station it holds for.
+    at = {"waiting": rec.get("waiting_stage"), "queued": rec.get("held_for", stage)}.get(stage, stage)
     if at == "final":
         at = "ci"
     if at == "merged":
@@ -419,7 +428,7 @@ def pipeline(rec):
             out.append(f"⚪ {name}")
         elif stage == "waiting":
             out.append(f"🙋 *{name}*")
-        elif stage == "final":
+        elif stage in ("final", "queued"):
             out.append(f"⏳ {name}")
         elif stage == "merged":
             out.append(f"✅ {name}")
@@ -530,6 +539,17 @@ def notify(rec, text, human=False, broadcast=False):
         log.error("Slack failed for %s:\n%s", rec["identifier"], traceback.format_exc())
 
 
+def tell_channel(text):
+    """Post about the whole factory, not one issue: one message in the default channel that mentions the person."""
+    log.info("factory: %s", text)
+    if not SLACK_BOT or not mutate(f"Slack: {text[:80]}"):
+        return
+    try:
+        slack("chat.postMessage", channel=channel_for({}), text=f"<@{SLACK_PERSON}> {text}" if SLACK_PERSON else text)
+    except Exception:
+        log.error("Slack failed for the default channel:\n%s", traceback.format_exc())
+
+
 def start_socket_mode(state):
     if not (SLACK_BOT and SLACK_APP):
         log.warning("Slack tokens missing: no Slack updates or replies")
@@ -578,6 +598,37 @@ def start_socket_mode(state):
 
 def canvas(method, path, body=None):
     return http(method, CANVAS_URL + path, {"X-Session-API-Key": CANVAS_KEY_FILE.read_text().strip()}, body)
+
+
+# The Canvas proxy answers these while the agent server behind it is not running.
+CANVAS_DOWN_STATUSES = (502, 503, 504)
+
+
+def canvas_up(state):
+    """Probe the Canvas once, before a tick touches any conversation. The proxy on :8000 stays up when the agent
+    server behind it dies, as when the kernel kills it for memory, so Docker never restarts it and every call
+    answers 502. While it is down no station moves, and the default channel hears it once, then once when it is back."""
+    try:
+        canvas("GET", "/api/agent-profiles")
+        error = None
+    except HTTPStatusError as e:
+        error = str(e) if e.status in CANVAS_DOWN_STATUSES else None
+    except OSError as e:
+        error = str(e) or type(e).__name__
+    down = state.get("canvas_down")
+    if error and not down:
+        log.error("the Canvas is down: %s", error)
+        state["canvas_down"] = {"since": now(), "error": error[:300]}
+        tell_channel(say("canvas.down", error=esc(error[:200])))
+        save_state(state)
+    elif error:
+        log.warning("the Canvas is still down, since %s", down["since"])
+    elif down:
+        state.pop("canvas_down")
+        minutes = (datetime.now(timezone.utc) - datetime.fromisoformat(down["since"])).total_seconds() / 60
+        tell_channel(say("canvas.back", minutes=max(1, round(minutes))))
+        save_state(state)
+    return not error
 
 
 def profile_secrets(profile_id):
@@ -1180,7 +1231,7 @@ def take_requests(state):
         rec = state["issues"].get(ident)
         if (kind == "retry" and rec and rec["stage"] == "waiting" and rec.get("waiting_stage") in STATIONS
                 and rec.get("conversation_id")):
-            if not mutate(f"retry the {rec['waiting_stage']} of {ident}"):
+            if not mutate(f"retry the {rec['waiting_stage']} of {ident}") or not has_slot(rec):
                 continue
             req.unlink(missing_ok=True)
             try:
@@ -1198,6 +1249,8 @@ def take_requests(state):
             continue
         if demo_busy() or not mutate(f"start the demo of {ident}"):
             return
+        if not has_slot(rec):
+            continue
         req.unlink(missing_ok=True)
         try:
             start_demo(rec, require_clean_and_pushed(rec), "review")
@@ -1235,11 +1288,19 @@ def handle_approval(rec):
     replies = rec.pop("inbox", []) + linear_replies(rec)
     if not replies:
         return
-    rec.pop("waiting_since", None)
     if all(is_approval(r["text"]) for r in replies):
+        rec.pop("waiting_since", None)
         record_approval(rec, replies[-1]["text"])
+        if not has_slot(rec, "plan.approved_queued"):
+            # The approval is committed in the plan, so the issue waits for a slot, not for the person.
+            rec.update(stage="queued", held_for="build")
+            return
         notify(rec, say("plan.approved"))
         return start_build(rec)
+    if not has_slot(rec):
+        rec["inbox"] = replies
+        return
+    rec.pop("waiting_since", None)
     changes = "\n\n".join(f"Via {r['source']}:\n\n{quote(r['text'])}" for r in replies if not is_approval(r["text"]))
     notify(rec, say("plan.revise"))
     rec["stage"] = "plan"
@@ -1596,6 +1657,10 @@ def deliver_replies(rec):
     replies = rec.pop("inbox", []) + linear_replies(rec)
     if not replies:
         return
+    if rec["stage"] == "waiting" and rec.get("conversation_id") and not has_slot(rec):
+        # The answer would resume a station: it stays in the inbox until a slot frees up.
+        rec["inbox"] = replies
+        return
     if rec["stage"] == "waiting" and rec.get("waiting_stage") == "verify" and rec.get("rounds_exhausted"):
         return fix_after_answer(rec, replies)
     if (rec["stage"] == "waiting" and rec.get("waiting_stage") == "demo"
@@ -1632,6 +1697,9 @@ def reopen_from_review(rec):
     if pr["state"] != "OPEN":
         notify(rec, say("review.closed", pr_url=rec["pr_url"], pr_number=rec["pr_number"],
                         state=say("review.state_merged" if pr["state"] == "MERGED" else "review.state_closed")))
+        return
+    if not has_slot(rec):
+        rec["inbox"] = requests
         return
     head = require_clean_and_pushed(rec)
     request = "\n\n".join(re.sub(r"<@\w+>\s*", "", r["text"]).strip(" :") for r in requests)
@@ -1765,8 +1833,21 @@ def active_count(state):
     return sum(r["stage"] not in IDLE_STAGES for r in state["issues"].values())
 
 
+def has_slot(rec, notice="held"):
+    """Whether an idle issue may start or resume a station now: `max_active` counts every issue at a station, however
+    it got there. Without a slot the issue keeps what it waits with, and its thread hears it once."""
+    if active_count(_STATE) < CONFIG["max_active"]:
+        rec.pop("queue_noticed", None)
+        return True
+    if not rec.get("queue_noticed"):
+        rec["queue_noticed"] = True
+        notify(rec, say(notice, max=CONFIG["max_active"]))
+    return False
+
+
 def fill_slots(state):
-    """Start held issues oldest first while slots are free; tell a queued issue its position once."""
+    """Start held issues oldest first while slots are free; tell a queued issue its position once. An issue queued
+    with `held_for` already ran its first station and starts that one instead."""
     pending = sorted((r for r in state["issues"].values() if r["stage"] in ("queued", "blocked")),
                      key=lambda r: r["picked_at"])
     position = 0
@@ -1778,10 +1859,15 @@ def fill_slots(state):
                     rec["queue_noticed"] = True
                     notify(rec, say("queued", position=position, max=CONFIG["max_active"]))
             continue
+        rec.pop("queue_noticed", None)
         taken = {r.get("plan_feature") for r in state["issues"].values()
                  if r is not rec and r["stage"] not in ("merged", "dropped")}
         try:
-            begin(rec, taken=taken)
+            if rec.get("held_for") == "build":
+                start_build(rec)
+                rec.pop("held_for")
+            else:
+                begin(rec, taken=taken)
         except Stop as stop:
             stop_for_human(rec, str(stop))
         except Exception:
@@ -1800,55 +1886,65 @@ def tick(state):
             announce_merges(state)
         except Exception:
             log.error("merge check failed:\n%s", traceback.format_exc())
-        live = [r for r in state["issues"].values() if r["stage"] not in IDLE_STAGES]
-        for rec in live:
-            try:
-                advance(rec)
-            except Stop as stop:
-                stop_for_human(rec, str(stop))
-            except Exception:
-                log.error("%s failed:\n%s", rec["identifier"], traceback.format_exc())
-            save_state(state)
-        for rec in [r for r in state["issues"].values() if r["stage"] == "approval"]:
-            try:
-                handle_approval(rec)
-            except Stop as stop:
-                stop_for_human(rec, str(stop))
-            except Exception:
-                log.error("%s approval failed:\n%s", rec["identifier"], traceback.format_exc())
-            save_state(state)
-        for rec in (r for r in state["issues"].values() if r["stage"] == "waiting"):
-            try:
-                deliver_replies(rec)
-            except Exception:
-                log.error("%s reply failed:\n%s", rec["identifier"], traceback.format_exc())
-        try:
-            clean_worktrees(state)
-        except Exception:
-            log.error("worktree cleanup failed:\n%s", traceback.format_exc())
-        for rec in [r for r in state["issues"].values() if r["stage"] == "review" and r.get("inbox")]:
-            try:
-                reopen_from_review(rec)
-            except Stop as stop:
-                stop_for_human(rec, str(stop))
-            except Exception:
-                log.error("%s reopen failed:\n%s", rec["identifier"], traceback.format_exc())
-            save_state(state)
+        # While the Canvas is down, replies, approvals and requests stay where they are instead of being spent on
+        # calls that fail; Linear and GitHub are still read.
+        up = canvas_up(state)
+        if up:
+            move_issues(state)
         for rec in (r for r in state["issues"].values() if r["stage"] == "review" and r.get("review_checks", 0) < 3):
             try:
                 keep_in_review(rec)
             except Exception:
                 log.error("%s review status failed:\n%s", rec["identifier"], traceback.format_exc())
         try:
-            take_requests(state)
-        except Exception:
-            log.error("requests failed:\n%s", traceback.format_exc())
-        try:
             pickup(state)
         except Exception:
             log.error("pickup failed:\n%s", traceback.format_exc())
-        fill_slots(state)
+        if up:
+            fill_slots(state)
         save_state(state)
+
+
+def move_issues(state):
+    """The part of a tick that runs, starts or resumes Canvas conversations."""
+    live = [r for r in state["issues"].values() if r["stage"] not in IDLE_STAGES]
+    for rec in live:
+        try:
+            advance(rec)
+        except Stop as stop:
+            stop_for_human(rec, str(stop))
+        except Exception:
+            log.error("%s failed:\n%s", rec["identifier"], traceback.format_exc())
+        save_state(state)
+    for rec in [r for r in state["issues"].values() if r["stage"] == "approval"]:
+        try:
+            handle_approval(rec)
+        except Stop as stop:
+            stop_for_human(rec, str(stop))
+        except Exception:
+            log.error("%s approval failed:\n%s", rec["identifier"], traceback.format_exc())
+        save_state(state)
+    for rec in (r for r in state["issues"].values() if r["stage"] == "waiting"):
+        try:
+            deliver_replies(rec)
+        except Exception:
+            log.error("%s reply failed:\n%s", rec["identifier"], traceback.format_exc())
+    try:
+        clean_worktrees(state)
+    except Exception:
+        log.error("worktree cleanup failed:\n%s", traceback.format_exc())
+    for rec in [r for r in state["issues"].values() if r["stage"] == "review" and r.get("inbox")]:
+        try:
+            reopen_from_review(rec)
+        except Stop as stop:
+            stop_for_human(rec, str(stop))
+        except Exception:
+            log.error("%s reopen failed:\n%s", rec["identifier"], traceback.format_exc())
+        save_state(state)
+    try:
+        take_requests(state)
+    except Exception:
+        log.error("requests failed:\n%s", traceback.format_exc())
 
 
 FINISHED = ("finished", "error", "stuck", "waiting_for_confirmation")
@@ -1862,6 +1958,8 @@ def quick_tick(state):
     """Between full ticks: advance only the stations whose conversation just ended. Touches the Canvas, not Linear."""
     with LOCK:
         _STATE["issues"] = state["issues"]
+        if not canvas_up(state):
+            return
         for rec in [r for r in state["issues"].values() if r["stage"] in STATIONS and r.get("conversation_id")]:
             try:
                 if canvas("GET", f"/api/conversations/{rec['conversation_id']}").get("execution_status") in FINISHED:

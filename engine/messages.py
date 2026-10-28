@@ -63,6 +63,8 @@ MESSAGES = {
     "plan.no_summary": {"pt-BR": "_O Plan não mandou um resumo. Leia o plano abaixo._",
                         "en": "_Plan sent no summary. Read the plan below._"},
     "plan.approved": {"pt-BR": "👍 *Plano aprovado*: o Build começa.", "en": "👍 *Plan approved*: Build starts."},
+    "plan.approved_queued": {"pt-BR": "👍 *Plano aprovado*. ⏳ Já há {max} issues rodando: o Build começa quando uma vaga abrir.",
+                             "en": "👍 *Plan approved*. ⏳ {max} issues are already running: Build starts when a slot frees up."},
     "plan.revise": {"pt-BR": "📝 *Ajuste pedido no plano*: o Plan refaz com o seu pedido e pede aprovação de novo.",
                     "en": "📝 *Plan change requested*: Plan revises it with your request and asks for approval again."},
     "plan.skipped": {"pt-BR": "⏭️ *Plan pulado*: `{plan}` já está aprovado no `{base}`.",
@@ -161,9 +163,21 @@ MESSAGES = {
                "en": "📥 *Joined the factory*: starts from `{base}` on the branch `{branch}`."},
     "queued": {"pt-BR": "⏳ *Na fila*: posição {position}. Já há {max} issues rodando; esta começa quando uma vaga abrir.",
                "en": "⏳ *Queued*: position {position}. {max} issues are already running; this one starts when a slot frees up."},
+    "held": {"pt-BR": "⏳ *Na fila*: já há {max} issues rodando. Esta segue quando uma vaga abrir, com o que você mandou.",
+             "en": "⏳ *Queued*: {max} issues are already running. This one carries on when a slot frees up, with what you sent."},
     "merged": {"pt-BR": "🎉 *PR mergeado!* <{pr_url}|PR #{pr_number}> entrou em `{base}`{by}. A issue saiu da factory. Valeu! 🙌",
                "en": "🎉 *PR merged!* <{pr_url}|PR #{pr_number}> went into `{base}`{by}. The issue left the factory. Thanks! 🙌"},
     "merged.by": {"pt-BR": " por {who}", "en": " by {who}"},
+
+    # the Canvas, in the default channel
+    "canvas.down": {"pt-BR": "🔌 *A Canvas está fora do ar*: `{error}`\nNenhuma etapa avança até ela voltar, e eu aviso aqui "
+                             "quando voltar. Se o agent server dentro do container morreu, `docker restart agent-sandbox` "
+                             "traz ela de volta.",
+                    "en": "🔌 *The Canvas is down*: `{error}`\nNo station moves until it is back, and I will say so here "
+                          "when it is. If the agent server inside the container died, `docker restart agent-sandbox` "
+                          "brings it back."},
+    "canvas.back": {"pt-BR": "✅ *A Canvas voltou* depois de {minutes} min fora do ar. As etapas voltam a andar.",
+                    "en": "✅ *The Canvas is back* after {minutes} min down. The stations move again."},
 
     # worktree cleanup
     "worktree.kept": {"pt-BR": "🧹 *Worktree mantido*: {why} Ele fica em `{path}` até isso ser resolvido.",
