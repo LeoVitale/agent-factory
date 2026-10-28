@@ -4,7 +4,7 @@ the-judge approved pull request #{{pr_number}} ({{pr_url}}) on head commit `{{he
 
 - After (this pull request): working tree `{{worktree}}`, branch `{{branch}}`, head `{{head}}`.
 - Before (the base without this pull request): commit `{{base_sha}}` of `{{base}}`. Check it out read-only with `git -C {{worktree}} worktree add --detach {{before_worktree}} {{base_sha}}` (if that path already exists, `git -C {{before_worktree}} checkout --detach {{base_sha}}`), then install its dependencies there: `{{install}}`.
-- Tasks file `{{tasks_file}}`, checklist `{{checklist}}`, verification report `{{verified}}`. Design mocks, when the feature has them, are linked from the tasks file.
+- Plan `{{plan}}`, checks `{{checks}}`, verification report `{{verification}}`. Design mocks, when the feature has them, are linked from the plan.
 - Write everything into `{{demo_dir}}` and nowhere else. Scratch files go in `{{demo_dir}}/_work/`.
 
 ## Rules
@@ -17,10 +17,10 @@ the-judge approved pull request #{{pr_number}} ({{pr_url}}) on head commit `{{he
 
 ## 1. Decide what to show
 
-Read the tasks file, the checklist and `git -C {{worktree}} diff --stat {{base_sha}}...{{head}}`. List:
+Read the plan, the checks and `git -C {{worktree}} diff --stat {{base_sha}}...{{head}}`. List:
 
 - **Screens**: every screen or state a user can see that this pull request changed (route, state such as empty, filled, error, overdue, a sheet open, a filter applied).
-- **Use cases**: every interactive behavior a person would want to watch, each tied to an acceptance criterion of the tasks file. Simple visual changes need one short video that walks the changed screens. Each distinct interaction (filtering, opening a sheet, navigating to a detail, submitting) gets its own video. Complex features get more. Keep it to at most 5 videos of at most 60 seconds each.
+- **Use cases**: every interactive behavior a person would want to watch, each tied to an acceptance criterion of the plan. Simple visual changes need one short video that walks the changed screens. Each distinct interaction (filtering, opening a sheet, navigating to a detail, submitting) gets its own video. Complex features get more. Keep it to at most 5 videos of at most 60 seconds each.
 
 ## 2. Run before and after side by side
 
@@ -62,7 +62,7 @@ Write `{{demo_dir}}/manifest.json`. Paths are relative to `{{demo_dir}}`. Write 
   "screens": [
     {
       "title": "Orders list - overdue row",
-      "criterion": "the acceptance criterion this screen proves, quoted from the tasks file",
+      "criterion": "the acceptance criterion this screen proves, quoted from the plan",
       "shots": [
         {
           "viewport": "1440",

@@ -26,12 +26,12 @@ MESSAGES = {
     "station.started": {"pt-BR": "{name} começou", "en": "{name} started"},
     "station.restarted": {"pt-BR": "{name} recomeçou", "en": "{name} restarted"},
     "station.follow": {"pt-BR": "👀 Acompanhar ao vivo", "en": "👀 Follow it live"},
-    "start.plan": {"pt-BR": "transforma a issue em tarefas com critérios que dá para conferir.",
-                   "en": "turns the issue into tasks with criteria that can be checked."},
-    "start.build": {"pt-BR": "implementa as tarefas, roda as provas do checklist e abre um PR em rascunho.",
-                    "en": "builds the tasks, runs the checklist proofs and opens a draft PR."},
-    "start.verify": {"pt-BR": "um agente que não escreveu o código refaz cada prova do checklist.",
-                     "en": "an agent that did not write the code runs every checklist proof again."},
+    "start.plan": {"pt-BR": "transforma a issue num plano com critérios que dá para conferir.",
+                   "en": "turns the issue into a plan with criteria that can be checked."},
+    "start.build": {"pt-BR": "implementa o plano, roda as provas dos checks e abre um PR em rascunho.",
+                    "en": "builds the plan, runs the proofs of the checks and opens a draft PR."},
+    "start.verify": {"pt-BR": "um agente que não escreveu o código refaz cada prova dos checks.",
+                     "en": "an agent that did not write the code runs every proof of the checks again."},
     "start.judge": {"pt-BR": "um agente revisa o PR com a skill the-judge e dá o veredito.",
                     "en": "an agent reviews the PR with the the-judge skill and gives the verdict."},
     "start.fix": {"pt-BR": "corrige o que a última etapa apontou.", "en": "fixes what the last station found."},
@@ -47,31 +47,30 @@ MESSAGES = {
                     "en": "as you asked, a new conversation, with a new Cursor process, carries on with the same request."},
     "build.continues": {"pt-BR": "Build continua", "en": "Build continues"},
     "build.handoff": {"pt-BR": "a conversa anterior encheu o contexto e passou o bastão. Uma conversa nova segue do ponto "
-                               "marcado no checklist.",
+                               "marcado nos checks.",
                       "en": "the previous conversation filled its context and handed off. A new conversation carries on "
-                            "from the point marked in the checklist."},
+                            "from the point marked in the checks."},
     "fix.round": {"pt-BR": "Correção {round} de {max}", "en": "Fix {round} of {max}"},
 
     # plan and its approval
-    "plan.ready": {"pt-BR": "✅ *Plan pronto*: `{tasks}`.", "en": "✅ *Plan ready*: `{tasks}`."},
     "plan.go_live": {"pt-BR": "⚠️ *Bloqueia o go-live*: {items}", "en": "⚠️ *Blocks go-live*: {items}"},
-    "plan.approval": {"pt-BR": "✋ *Aprove o plano antes do Build*\n{summary}\n\n📋 Arquivo de tarefas: `{tasks}`\n"
+    "plan.approval": {"pt-BR": "✋ *Aprove o plano antes do Build*\n{summary}\n\n📋 Plano: `{plan}`\n"
                                "👉 Responda *aprovo* ou *entendi* aqui na thread para eu seguir. Qualquer outra resposta "
                                "volta para o Plan como pedido de ajuste.",
-                      "en": "✋ *Approve the plan before Build*\n{summary}\n\n📋 Tasks file: `{tasks}`\n"
+                      "en": "✋ *Approve the plan before Build*\n{summary}\n\n📋 Plan: `{plan}`\n"
                             "👉 Reply *approve* or *got it* in this thread and I carry on. Any other reply goes back to "
                             "Plan as a change request."},
-    "plan.no_summary": {"pt-BR": "_O Plan não mandou um resumo. Leia o arquivo de tarefas abaixo._",
-                        "en": "_Plan sent no summary. Read the tasks file below._"},
+    "plan.no_summary": {"pt-BR": "_O Plan não mandou um resumo. Leia o plano abaixo._",
+                        "en": "_Plan sent no summary. Read the plan below._"},
     "plan.approved": {"pt-BR": "👍 *Plano aprovado*: o Build começa.", "en": "👍 *Plan approved*: Build starts."},
     "plan.revise": {"pt-BR": "📝 *Ajuste pedido no plano*: o Plan refaz com o seu pedido e pede aprovação de novo.",
                     "en": "📝 *Plan change requested*: Plan revises it with your request and asks for approval again."},
-    "plan.skipped": {"pt-BR": "⏭️ *Plan pulado*: `{task}` já está planejado no `{base}`.",
-                     "en": "⏭️ *Plan skipped*: `{task}` is already planned on `{base}`."},
+    "plan.skipped": {"pt-BR": "⏭️ *Plan pulado*: `{plan}` já está aprovado no `{base}`.",
+                     "en": "⏭️ *Plan skipped*: `{plan}` is already approved on `{base}`."},
 
     # build, verify, judge, fix
-    "build.ready": {"pt-BR": "✅ *Build pronto*: PR em rascunho <{pr_url}|#{pr_number}> aberto. <{checklist_url}|📋 Checklist>",
-                    "en": "✅ *Build done*: draft PR <{pr_url}|#{pr_number}> opened. <{checklist_url}|📋 Checklist>"},
+    "build.ready": {"pt-BR": "✅ *Build pronto*: PR em rascunho <{pr_url}|#{pr_number}> aberto. <{checks_url}|📋 Checks>",
+                    "en": "✅ *Build done*: draft PR <{pr_url}|#{pr_number}> opened. <{checks_url}|📋 Checks>"},
     "base.updated": {"pt-BR": "🔄 *Base atualizada*: trouxe o `{base}` mais recente para `{branch}`.",
                      "en": "🔄 *Base updated*: merged the latest `{base}` into `{branch}`."},
     "base.conflict": {"pt-BR": "trazer o `{base}` mais recente conflita em {files}.",
@@ -99,8 +98,8 @@ MESSAGES = {
     "review.next_demo": {"pt-BR": "\n👉 Aprove a feature pela demo e revise o PR. O merge é com você.",
                          "en": "\n👉 Approve the feature from the demo and review the PR. Merging is up to you."},
     "review.next": {"pt-BR": "\n👉 Revise o PR. O merge é com você.", "en": "\n👉 Review the PR. Merging is up to you."},
-    "verify.pass": {"pt-BR": "✅ *Verify passou*: todas as provas do checklist conferem. {report}",
-                    "en": "✅ *Verify passed*: every checklist proof holds. {report}"},
+    "verify.pass": {"pt-BR": "✅ *Verify passou*: todas as provas dos checks conferem. {report}",
+                    "en": "✅ *Verify passed*: every proof of the checks holds. {report}"},
     "verify.fail": {"pt-BR": "❌ *Verify reprovou*: algumas provas não conferem. {report}",
                     "en": "❌ *Verify failed*: some proofs do not hold. {report}"},
     "verify.report": {"pt-BR": "📄 Relatório", "en": "📄 Report"},

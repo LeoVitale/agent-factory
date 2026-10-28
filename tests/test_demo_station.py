@@ -82,8 +82,7 @@ for bad, why in ((dict(manifest, videos=[]), "no video"),
 # ── markdown ──
 rec = {"identifier": "HES-1", "pr_number": 7, "pr_url": "https://github.com/o/r/pull/7", "demo_for": "abcdef1234567890",
        "worktree": str(clone), "issue_id": "i1", "base": "main", "demo_dir": str(demo), "feature": "visual-refresh",
-       "issue_url": "https://linear.app/x/HES-1", "branch": "feat/x", "tasks_file": ".specs/features/visual-refresh/tasks/01-x.md",
-       "checklist": ".specs/features/visual-refresh/checks/01-x.md"}
+       "issue_url": "https://linear.app/x/HES-1", "branch": "feat/x"}
 gh_md = f.demo_markdown(rec, m, lambda n, raw=True: f"https://x/{n}" + ("?raw=true" if raw else ""), "github", "Videos: L")
 li_md = f.demo_markdown(rec, m, lambda n, raw=True: f"https://u/{n}", "linear")
 check("github: before/after table with 3 columns", "| 🎨 Design | ⬅️ Before | ✨ After |" in gh_md)

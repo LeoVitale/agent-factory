@@ -72,7 +72,7 @@ class InitTest(CliCase):
         code, _, _ = self.cli("init", cwd=repo)
         self.assertEqual(code, 0)
         config = json.loads((repo / ".factory/config.json").read_text())
-        self.assertEqual((config["version"], config["github_repo"], config["base_branch"]), (1, "acme/widget", "trunk"))
+        self.assertEqual((config["version"], config["github_repo"], config["base_branch"]), (2, "acme/widget", "trunk"))
         self.assertEqual(sorted(p.name for p in (repo / ".factory/prompts").iterdir()), sorted(PROMPTS))
         self.assertEqual(self.instance("widget")["config_ref"], "origin/trunk")
 
@@ -222,11 +222,11 @@ class UpTest(UpCase):
 
     def test_unknown_config_version_exits_1(self):
         self.push_kit_change(lambda kit: (kit / "config.json").write_text(
-            json.dumps({**json.loads((kit / "config.json").read_text()), "version": 2})))
+            json.dumps({**json.loads((kit / "config.json").read_text()), "version": 3})))
         code, _, err = self.cli("up", "widget")
         self.assertEqual(code, 1)
-        self.assertIn("version 2", err)
-        self.assertIn("supports 1", err)
+        self.assertIn("version 3", err)
+        self.assertIn("supports 2", err)
         self.assertEqual(self.docker, [])
 
     def test_empty_env_keys_exit_1_named_without_values(self):

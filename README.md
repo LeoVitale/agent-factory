@@ -53,14 +53,17 @@ In the project's folder:
 
 ## Plan approval and Slack language
 
-Three keys in `.factory/config.json` change how the factory talks to you:
+`tlc-plan` and `tlc-implement` write `plan.md`, `checks.md` and `verification.md` in a feature folder, which `artifacts.folder` in `.factory/config.json` names. Each issue plans in the folder its description names while that folder has no `plan.md` and no other open issue plans there. Otherwise it plans in `<feature>-<issue id>` and reads the discovery from the folder the description names.
 
-- `"plan_approval": true` makes Build wait for you. When Plan finishes, the issue thread explains the plan, and you reply in the thread or on the Linear issue. A reply of `aprovo`, `entendi`, `ok`, `approve` or `got it` starts Build. Any other reply goes back to Plan as a change request, and Plan asks for approval again. An issue whose `Task:` file is already on the base skips Plan, and the approval with it. Without the key, Build starts as soon as Plan finishes.
+Build waits for you. When Plan finishes, the issue thread explains the plan, and you reply in the thread or on the Linear issue. A reply of `aprovo`, `entendi`, `ok`, `approve` or `got it` starts Build, and the orchestrator first commits your words as the plan's `**Approved**` line, without which `tlc-implement` does not build. Any other reply goes back to Plan as a change request, and Plan asks for approval again. An issue whose `Plan:` file is already on the base with its `**Approved**` line skips Plan, and the approval with it.
+
+Two keys in `.factory/config.json` change how the factory talks to you:
+
 - `"slack": {"language": "pt-BR"}` or `"en"` picks the language of the Slack thread. Without it, Slack speaks Portuguese. Linear and GitHub comments stay in English.
 
 - `"slack": {"broadcast": "none"}` keeps every reply in the issue thread, so the channel shows only each issue's first message. `"needs_you"` also posts to the channel the replies that need you: plan approval, stops and "ready for review". `"all"` adds the start of the first station and the merge; it is what a project without the key gets. A reply that needs you mentions you in every mode, and Slack notifies a mention inside a thread.
 
-All three take effect on the next tick once they are pushed to `config_ref`.
+Both take effect on the next tick once they are pushed to `config_ref`.
 
 ## Tests
 

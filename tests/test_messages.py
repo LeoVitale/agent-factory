@@ -36,12 +36,12 @@ def rec_at(stage, **extra):
 
 # ── the progress line of the thread root ──
 line = f.pipeline(rec_at("queued", conversations=[]))
-check("queued: every step still grey", line.count("⚪") == 7 and "*" not in line, line)
+check("queued: every step still grey", line.count("⚪") == 8 and "*" not in line, line)
 line = f.pipeline(rec_at("build", conversations=[]))
-check("skipped plan shows as skipped", line.startswith("⏭️ Plan › 🔨 *Build* › ⚪ Verify"), line)
+check("skipped plan shows as skipped", line.startswith("⏭️ Plan › ⏭️ Approval › 🔨 *Build* › ⚪ Verify"), line)
 line = f.pipeline(rec_at("verify"))
 check("verify: done steps ticked, current bold",
-      line == "✅ Plan › ✅ Build › 🔍 *Verify* › ⚪ Judge › ⚪ CI › ⚪ Demo › ⚪ Review", line)
+      line == "✅ Plan › ✅ Approval › ✅ Build › 🔍 *Verify* › ⚪ Judge › ⚪ CI › ⚪ Demo › ⚪ Review", line)
 line = f.pipeline(rec_at("fix", round=2))
 check("fix round: the loop restarts after Fix", "✅ Build › 🔧 *Fix 2/3* › ⚪ Verify" in line, line)
 line = f.pipeline(rec_at("verify", round=1))
@@ -51,7 +51,7 @@ check("waiting: the stopped step carries the hand", "✅ Verify › 🙋 *Judge*
 line = f.pipeline(rec_at("final"))
 check("approved, demo pending", "✅ Judge › ⏳ CI › ⚪ Demo › ⚪ Review" in line, line)
 line = f.pipeline(rec_at("review"))
-check("review: all ticked", line.count("✅") == 6 and line.endswith("👀 *Review*"), line)
+check("review: all ticked", line.count("✅") == 7 and line.endswith("👀 *Review*"), line)
 
 # ── the thread root ──
 root = f.root_text(rec_at("verify", round=1, title="Fix <b> & co", pr_url="https://github.com/o/r/pull/7", pr_number=7))
@@ -85,7 +85,7 @@ check("fix prompt still gets the instruction", "Address the review at https://r.
 
 msgs.clear()
 f.issue_detail = lambda i: {"identifier": "HES-1", "title": "t", "url": "u", "description": "d", "comments": {"nodes": []}}
-f.start_build(rec_at("build", checklist="c.md"), handoff=True)
+f.start_build(rec_at("build"), handoff=True)
 check("handoff: one message", len(msgs) == 1 and msgs[0][0].startswith("🔨 *Build continua*: "), msgs)
 
 # ── stops ──
@@ -123,7 +123,7 @@ check("factory comments are not replies", [g["text"] for g in got] == ["Yes, add
 sent, started = [], []
 f.send_to_conversation = lambda rec, text: sent.append(text)
 f.require_clean_and_pushed = lambda rec: "abc123"
-f.start_fix = lambda rec, reason, head, why: started.append((head, why, "that edit is in scope" in reason))
+f.start_fix = lambda rec, reason, head, why: started.append((head, why, "that change is in scope" in reason))
 r = rec_at("waiting", waiting_stage="demo", conversation_id="demo-1", waiting_since="2099",
            question="Should that round fix both comments? This needs a Fix round.",
            inbox=[{"source": "Linear", "text": "Yes. Both nits, and re-pin C6."}])

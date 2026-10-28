@@ -57,6 +57,8 @@ RETRY_NOTE = ("A previous conversation for this station stopped with a connectio
               "first, keep what it did, and continue from there. The job is unchanged:\n\n---\n\n")
 STATIONS = ("plan", "build", "verify", "judge", "fix", "demo")
 DONE_STAGES = ("review", "merged", "dropped")
+# The files tlc-plan and tlc-implement write in a feature folder.
+PLAN, CHECKS, VERIFICATION = "plan.md", "checks.md", "verification.md"
 FACTORY_MARK = "[factory]"
 
 EVIDENCE = Path(CONFIG["demo"].get("evidence_path", "/projects/factory-evidence"))
@@ -214,13 +216,13 @@ def artifact(key, feature):
 
 
 def feature_dir(feature):
-    """The folder the tasks and the checklists of a feature share, e.g. `.specs/features/<feature>`."""
-    return os.path.commonpath([artifact("tasks", feature), artifact("checks", feature)])
+    """A feature's folder, e.g. `.specs/features/<feature>`, where tlc-plan and tlc-implement write their files."""
+    return artifact("folder", feature).rstrip("/")
 
 
-def task_line():
-    before, _, after = CONFIG["artifacts"]["tasks"].partition("{feature}")
-    return re.compile(r"^\s*Task:\s*`(" + re.escape(before) + r"[a-z0-9-]+" + re.escape(after) + r"[^`\s]+\.md)`", re.M)
+def plan_line():
+    before, _, after = feature_dir("{feature}").partition("{feature}")
+    return re.compile(r"^\s*Plan:\s*`(" + re.escape(before) + r"[a-z0-9-]+" + re.escape(f"{after}/{PLAN}") + ")`", re.M)
 
 
 def tech_debt_source(text):
@@ -239,7 +241,7 @@ def feature_from_debt(path):
 
 
 def issue_fields(description):
-    """The Base, Branch, Task and "Start only after pull request #N" lines an issue may carry.
+    """The Base, Branch, Plan and "Start only after pull request #N" lines an issue may carry.
 
     A description that never names a feature folder still gets one when it cites exactly one tech-debt
     record. The folder is the record's id in lowercase. Two records, or none, leave the feature empty so
@@ -247,8 +249,8 @@ def issue_fields(description):
     """
     text = description or ""
     fields = {key: (m.group(1) if (m := rx.search(text)) else None) for key, rx in FIELD_LINES.items()}
-    fields["task"] = (m.group(1) if (m := task_line().search(text)) else None)
-    feature = re.search(CONFIG["artifacts"]["feature"], fields["task"] or text)
+    fields["plan"] = (m.group(1) if (m := plan_line().search(text)) else None)
+    feature = re.search(CONFIG["artifacts"]["feature"], fields["plan"] or text)
     fields["feature"] = feature.group(1) if feature else None
     fields["debt_source"] = None
     if not fields["feature"]:
@@ -395,7 +397,7 @@ def plural(n, one, many):
 
 def pipeline(rec):
     """The progress line of the thread root: done steps ticked, the current one bold, the rest grey."""
-    steps = ["plan"] + (["approval"] if CONFIG["plan_approval"] else []) + ["build"]
+    steps = ["plan", "approval", "build"]
     steps += (["fix"] if rec.get("round") else []) + ["verify", "judge", "ci"]
     steps += (["demo"] if CONFIG['demo'].get("enabled") else []) + ["review"]
     stage = rec["stage"]
@@ -759,15 +761,46 @@ def require_tracked(rec, rel):
         raise Stop(f"Expected a committed `{rel}`, and it is not in the branch.")
 
 
-def blocking_unresolved(path):
-    text = Path(path).read_text()
-    section = re.search(r"^## Unresolved\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
-    rows = []
-    for line in (section.group(1) if section else "").splitlines():
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) >= 3 and cells[0].isdigit():
-            rows.append((cells[1], cells[2]))
-    return [q for kind, q in rows if kind == "blocks"], [q for kind, q in rows if kind == "blocks go-live"]
+OPEN_QUESTIONS = re.compile(r"^\s*\*\*Open questions:?\*\*:?\s*", re.I)
+QUESTION_ITEM = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+")
+QUESTION_MARK = re.compile(r"[`(\[](blocks go-live|blocks|open)[`)\]]|^\W*(blocks go-live|blocks|open)\W*(?::|\s[-–—])",
+                           re.I)
+APPROVED = re.compile(r"^\*\*Approved\*\*:")
+APPROVED_ON = re.compile(r"^\*\*Approved\*\*:\s*\d{4}-\d{2}-\d{2}", re.M)
+
+
+def question_kind(question):
+    """`blocks`, `blocks go-live` or `open`, in backticks or leading the line. An unmarked question blocks."""
+    mark = QUESTION_MARK.search(question)
+    return (mark.group(1) or mark.group(2)).lower() if mark else "blocks"
+
+
+def open_questions(path):
+    """The plan's open questions that block Build, and those that block only go-live.
+
+    tlc-plan writes them after `**Open questions:**`, on that line or as the list below it; `none` means there are none.
+    """
+    lines = Path(path).read_text().splitlines()
+    at = next((i for i, line in enumerate(lines) if OPEN_QUESTIONS.match(line)), None)
+    if at is None:
+        return [], []
+    inline = OPEN_QUESTIONS.sub("", lines[at]).strip()
+    questions = [inline] if inline else []
+    for line in lines[at + 1:]:
+        if QUESTION_ITEM.match(line):
+            questions.append(QUESTION_ITEM.sub("", line).strip())
+        elif questions and line.startswith((" ", "\t")) and line.strip():
+            questions[-1] += " " + line.strip()
+        elif line.strip() or questions:
+            break
+    questions = [q for q in questions if not re.match(r"[*_`]*none\b", q, re.I)]
+    return ([q for q in questions if question_kind(q) == "blocks"],
+            [q for q in questions if question_kind(q) == "blocks go-live"])
+
+
+def on_base(rec, path):
+    return ref_exists(f"origin/{rec['base']}") and run(
+        ["git", "cat-file", "-e", f"origin/{rec['base']}:{path}"], check=False).returncode == 0
 
 
 def pr_checks(rec, head):
@@ -827,14 +860,13 @@ CI_NOTE = ("The GitHub token here cannot read the Checks API, so `gh pr checks` 
 
 
 def paths(rec):
-    feature = feature_dir(rec["feature"])
-    checklist = rec.get("checklist") or ""
+    plan_feature = rec.get("plan_feature") or rec["feature"]
+    folder = feature_dir(plan_feature)
     return dict(ci_note=CI_NOTE, identifier=rec["identifier"], issue_url=rec["issue_url"], worktree=rec["worktree"],
-                branch=rec["branch"], base=rec["base"], feature=rec["feature"], tasks_file=rec.get("tasks_file", ""),
-                checklist=checklist, verified=checklist[:-3] + ".verified.md" if checklist else "",
-                pr_url=rec.get("pr_url", ""), pr_number=rec.get("pr_number", ""),
-                round=rec.get("round", 0), max_rounds=max_rounds(), feature_dir=feature,
-                tasks_dir=artifact("tasks", rec["feature"]), checks_dir=artifact("checks", rec["feature"]),
+                branch=rec["branch"], base=rec["base"], feature=rec["feature"], feature_dir=feature_dir(rec["feature"]),
+                plan_feature=plan_feature, plan=f"{folder}/{PLAN}", checks=f"{folder}/{CHECKS}",
+                verification=f"{folder}/{VERIFICATION}", pr_url=rec.get("pr_url", ""),
+                pr_number=rec.get("pr_number", ""), round=rec.get("round", 0), max_rounds=max_rounds(),
                 discovery=artifact("discovery", rec["feature"]))
 
 
@@ -851,7 +883,7 @@ def debt_note(rec):
         f"copy `{source}` to that path. Leave `{source}` in `{os.path.dirname(source)}/`. "
         "Do not overwrite an existing `discovery.md`. "
         f"If `{source}` is missing from the worktree, stop with `needs_human`. "
-        "Commit the copy together with the tasks file. Do not push.\n"
+        "Commit the copy together with the plan. Do not push.\n"
     )
 
 
@@ -863,7 +895,7 @@ def plan_brief():
     return ("\n## Explain the plan to the person\n\n"
             "The person approves this plan in Slack before Build starts. In the FACTORY_RESULT line, add "
             f"`\"summary\"`: a clear explanation, written in {LANGUAGE_NAMES[language()]}, of everything that will be "
-            "done for this issue: what changes for the people who use it, the tasks in order and what each one "
+            "done for this issue: what changes for the people who use it, the slices in order and what each one "
             "delivers, the parts of the code it touches, what stays out of scope, and any open question or risk. "
             "Plain language, short bullet lines, at most 2,500 characters. Write each line break as `\\n`, so the "
             "result stays on one line.\n")
@@ -871,21 +903,19 @@ def plan_brief():
 
 def start_plan(rec):
     issue = issue_detail(rec["issue_id"])
-    fields = ', "tasks_file": "<path of the tasks file>"'
-    if CONFIG["plan_approval"]:
-        fields += ', "summary": "<the explanation of the plan for the person>"'
+    fields = ', "summary": "<the explanation of the plan for the person>"'
     prompt = render("plan.md", issue=issue_block(issue), debt_note=debt_note(rec),
                     result=result_block(extra_fields=fields), **paths(rec))
-    start_station(rec, "plan", prompt + (plan_brief() if CONFIG["plan_approval"] else ""))
+    start_station(rec, "plan", prompt + plan_brief())
 
 
 def start_build(rec, handoff=False):
     issue = issue_detail(rec["issue_id"])
-    note = ("A previous Build conversation handed off. Continue from the handoff recorded in the checklist "
-            f"`{rec.get('checklist')}`. Do not redo landed slices.") if handoff else ""
-    start_station(rec, "build", render("build.md", issue=issue_block(issue), handoff=note, result=result_block(
-        extra_status=" | handoff", extra_fields=', "checklist": "<path of the checklist>"'), **paths(rec)),
-        **(dict(title=say("build.continues"), detail=say("build.handoff")) if handoff else {}))
+    note = ("A previous Build conversation handed off. Continue from the handoff recorded in "
+            f"`{paths(rec)['checks']}`. Do not redo landed slices.") if handoff else ""
+    start_station(rec, "build", render("build.md", issue=issue_block(issue), handoff=note,
+                                       result=result_block(extra_status=" | handoff"), **paths(rec)),
+                  **(dict(title=say("build.continues"), detail=say("build.handoff")) if handoff else {}))
 
 
 def start_verify(rec, head):
@@ -1179,24 +1209,18 @@ def take_requests(state):
 
 
 def after_plan(rec, result):
-    tasks = result.get("tasks_file", "")
-    require_tracked(rec, tasks)
-    if not tasks.startswith(artifact("tasks", rec["feature"])):
-        raise Stop(f"The tasks file `{tasks}` is outside `{artifact('tasks', rec['feature'])}`.")
-    blocks, go_live = blocking_unresolved(Path(rec["worktree"]) / tasks)
+    plan = paths(rec)["plan"]
+    require_tracked(rec, plan)
+    blocks, go_live = open_questions(Path(rec["worktree"]) / plan)
     if blocks:
-        raise Stop("The plan has blocking Unresolved questions:\n" + "\n".join(f"- {q}" for q in blocks))
-    rec["tasks_file"] = tasks
+        raise Stop("The plan has blocking open questions:\n" + "\n".join(f"- {q}" for q in blocks))
     go_live_note = "\n" + say("plan.go_live", items=esc("; ".join(go_live))) if go_live else ""
-    if not CONFIG["plan_approval"]:
-        notify(rec, say("plan.ready", tasks=tasks) + go_live_note)
-        return start_build(rec)
     # Build waits for the person: the plan is explained in the thread, and their reply approves it or changes it.
     rec["stage"] = "approval"
     rec["waiting_since"] = now()
     summary = esc(result.get("summary") or "").strip() or say("plan.no_summary")
-    notify(rec, say("plan.approval", summary=summary, tasks=tasks) + go_live_note, human=True)
-    comment(rec, f"📋 **Plan ready for your approval.** Tasks file: `{tasks}`. Reply in the Slack thread, or here, with "
+    notify(rec, say("plan.approval", summary=summary, plan=plan) + go_live_note, human=True)
+    comment(rec, f"📋 **Plan ready for your approval.** Plan: `{plan}`. Reply in the Slack thread, or here, with "
                  "`approve` to start Build, or with the changes you want.")
 
 
@@ -1213,6 +1237,7 @@ def handle_approval(rec):
         return
     rec.pop("waiting_since", None)
     if all(is_approval(r["text"]) for r in replies):
+        record_approval(rec, replies[-1]["text"])
         notify(rec, say("plan.approved"))
         return start_build(rec)
     changes = "\n\n".join(f"Via {r['source']}:\n\n{quote(r['text'])}" for r in replies if not is_approval(r["text"]))
@@ -1221,26 +1246,45 @@ def handle_approval(rec):
     send_to_conversation(rec, (
         f"The person asked for changes to the plan:\n\n{changes}\n\n"
         f"First, add a comment on Linear issue {rec['identifier']} with this request translated to English. Start the "
-        "comment with `[factory] 📝 Plan change requested:`. Use the Linear MCP. Then update the tasks file, commit "
-        "it, and finish exactly as your first message describes, with the FACTORY_RESULT line and a new summary."))
+        "comment with `[factory] 📝 Plan change requested:`. Use the Linear MCP. Then update the plan, run the "
+        "skill's `validate_plan.py` until it exits 0, commit it, and finish exactly as your first message describes, "
+        "with the FACTORY_RESULT line and a new summary."))
+
+
+def record_approval(rec, text):
+    """tlc-implement builds only a plan whose `**Approved**` line holds the person's words: write it and commit."""
+    plan = paths(rec)["plan"]
+    words = re.sub(r"<@\w+>", "", text).strip().replace('"', "'")
+    line = f'**Approved**: {datetime.now(timezone.utc).date().isoformat()} - user: "{words}"'
+    path = Path(rec["worktree"]) / plan
+    before = path.read_text()
+    lines = before.splitlines()
+    at = next((i for i, existing in enumerate(lines) if APPROVED.match(existing)), None)
+    if at is None:
+        title = next((i for i, existing in enumerate(lines) if existing.startswith("# ")), -1)
+        lines[title + 1:title + 1] = ["", line]
+    else:
+        lines[at] = line
+    text = "\n".join(lines) + "\n"
+    if text == before or not mutate(f"record the approval in {plan}"):
+        return
+    path.write_text(text)
+    git("add", plan, cwd=rec["worktree"])
+    git("commit", "-qm", f"docs(plan): record the approval of {rec['identifier']}", cwd=rec["worktree"])
 
 
 def after_build(rec, result):
     if result.get("status") == "handoff":
-        rec["checklist"] = result.get("checklist") or rec.get("checklist")
         return start_build(rec, handoff=True)
-    checklist = result.get("checklist", "")
-    require_tracked(rec, checklist)
-    if not checklist.startswith(artifact("checks", rec["feature"])) or checklist.endswith(".verified.md"):
-        raise Stop(f"The checklist `{checklist}` is outside `{artifact('checks', rec['feature'])}`.")
-    rec["checklist"] = checklist
+    checks = paths(rec)["checks"]
+    require_tracked(rec, checks)
     head = require_clean_and_pushed(rec)
     prs = gh_json("pr", "list", "--head", rec["branch"], "--base", rec["base"], "--state", "open",
                   "--json", "number,url", cwd=rec["worktree"]) or []
     if not prs:
         raise Stop(f"No open pull request from `{rec['branch']}` into `{rec['base']}`.")
     rec["pr_number"], rec["pr_url"] = prs[0]["number"], prs[0]["url"]
-    notify(rec, say("build.ready", pr_url=rec["pr_url"], pr_number=rec["pr_number"], checklist_url=blob(head, checklist)))
+    notify(rec, say("build.ready", pr_url=rec["pr_url"], pr_number=rec["pr_number"], checks_url=blob(head, checks)))
     comment(rec, f"🔨 **Build done.** Draft pull request: [PR #{rec['pr_number']}]({rec['pr_url']})")
     changed = git("diff", "--name-only", f"origin/{rec['base']}...HEAD", cwd=rec["worktree"]).splitlines()
     guard = CONFIG["schema_guard"]
@@ -1323,17 +1367,17 @@ def check_final(rec):
 
 def after_verify(rec, result):
     head = require_clean_and_pushed(rec)
-    verified = paths(rec)["verified"]
-    require_tracked(rec, verified)
-    if git("log", "-1", "--format=%H", "--", verified, cwd=rec["worktree"]) != head:
-        raise Stop(f"`{verified}` is not the last commit, so it does not verify the head.")
-    report = (Path(rec["worktree"]) / verified).read_text()
-    report_link = f"<{blob(head, verified)}|{say('verify.report')}>"
+    verification = paths(rec)["verification"]
+    require_tracked(rec, verification)
+    if git("log", "-1", "--format=%H", "--", verification, cwd=rec["worktree"]) != head:
+        raise Stop(f"`{verification}` is not the last commit, so it does not verify the head.")
+    report = (Path(rec["worktree"]) / verification).read_text()
+    report_link = f"<{blob(head, verification)}|{say('verify.report')}>"
     if re.search(r"\*\*Verdict\*\*:\s*PASS", report):
         notify(rec, say("verify.pass", report=report_link))
         return start_judge(rec, head)
     notify(rec, say("verify.fail", report=report_link))
-    start_fix(rec, f"The Verifier returned FAIL. Read `{verified}` for the failing checks.", head,
+    start_fix(rec, f"The Verifier returned FAIL. Read `{verification}` for the findings.", head,
               why=say("verify.fix_why"))
 
 
@@ -1513,7 +1557,7 @@ def fix_after_answer(rec, replies):
     except Stop as stop:
         return stop_for_human(rec, str(stop))
     answers = "\n\n".join(f"The person answered through {r['source']}:\n\n{quote(r['text'])}" for r in replies)
-    reason = (f"The Verifier returned FAIL. Read `{paths(rec)['verified']}` for the failing checks. The factory "
+    reason = (f"The Verifier returned FAIL. Read `{paths(rec)['verification']}` for the findings. The factory "
               f"stopped after {max_rounds()} fix rounds, and the person answered.\n\n{answers}\n\n"
               f"First, add a comment on Linear issue {rec['identifier']} with this answer translated to English. "
               f"Start the comment with `[factory] 📨 Answer from the person (via {replies[0]['source']}):`. "
@@ -1539,8 +1583,8 @@ def fix_from_demo_answer(rec, replies):
               f"First, add a comment on Linear issue {rec['identifier']} with this answer translated to English. "
               f"Start the comment with `[factory] 📨 Answer from the person (via {replies[0]['source']}):`. "
               "Use the Linear MCP. Then do what the answer confirms. "
-              "Where the answer explicitly authorizes a checklist edit, that edit is in scope: "
-              "do not stop to ask about it, and do not treat the checklist rule as a block on that edit.")
+              "Where the answer explicitly authorizes a change to the checks, that change is in scope: "
+              "do not stop to ask about it, and do not treat the rule that the checks do not change as a block on it.")
     for key in ("waiting_stage", "question", "rounds_exhausted", "base_syncs"):
         rec.pop(key, None)
     set_needs_human(rec, False)
@@ -1628,7 +1672,7 @@ def new_record(issue):
     rec = {"issue_id": issue["id"], "identifier": issue["identifier"], "title": issue["title"],
            "issue_url": issue["url"], "project": (issue.get("project") or {}).get("name"),
            "stage": "queued", "round": 0, "picked_at": now(), "base": fields["base"] or CONFIG["base_branch"],
-           "task": fields["task"], "worktree": str(WORKTREES / issue["identifier"])}
+           "plan": fields["plan"], "worktree": str(WORKTREES / issue["identifier"])}
     if fields["feature"]:
         rec.update(feature=fields["feature"],
                    branch=fields["branch"] or f"feat/{fields['feature']}-{issue['identifier'].lower()}")
@@ -1646,8 +1690,19 @@ def refuse(rec, why, why_slack):
     comment(rec, f"⛔ **Can't start yet:** {why}\n\nFix the description, then remove the `{label}` label to retry.")
 
 
-def begin(rec, issue=None):
-    """Start the issue's first station once nothing holds it. Returns True when it took a slot."""
+def plan_folder(rec, taken):
+    """The feature this issue plans in: the issue's own feature while its folder has no plan and no other open issue
+    plans there, otherwise `<feature>-<issue>`, which reads the discovery from the feature's folder."""
+    feature = rec["feature"]
+    if feature in taken or on_base(rec, f"{feature_dir(feature)}/{PLAN}"):
+        return f"{feature}-{rec['identifier'].lower()}"
+    return feature
+
+
+def begin(rec, issue=None, taken=()):
+    """Start the issue's first station once nothing holds it. Returns True when it took a slot.
+
+    `taken` holds the plan folders of the other issues that are not merged yet."""
     issue = issue or issue_detail(rec["issue_id"])
     labels = {l["name"] for l in issue["labels"]["nodes"]}
     if issue["state"]["name"] != CONFIG["states"]["ready"] or CONFIG["label"] not in labels:
@@ -1665,17 +1720,21 @@ def begin(rec, issue=None):
         return False
     ensure_worktree(rec)
     set_status(rec, "progress")
-    task = rec.get("task")
-    if task and ref_exists(f"origin/{rec['base']}") and run(
-            ["git", "cat-file", "-e", f"origin/{rec['base']}:{task}"], check=False).returncode == 0:
-        blocks, _ = blocking_unresolved(Path(rec["worktree"]) / task)
+    plan = rec.get("plan")
+    if plan and on_base(rec, plan):
+        rec["plan_feature"] = rec["feature"]
+        if not APPROVED_ON.search((Path(rec["worktree"]) / plan).read_text()):
+            rec["stage"] = "plan"
+            raise Stop(f"`{plan}` has no `**Approved**` line. Approve it on `{rec['base']}`, or remove the `Plan:` "
+                       "line so Plan runs.")
+        blocks, _ = open_questions(Path(rec["worktree"]) / plan)
         if blocks:
             rec["stage"] = "plan"
-            raise Stop(f"`{task}` has blocking Unresolved questions:\n" + "\n".join(f"- {q}" for q in blocks))
-        rec["tasks_file"] = task
-        notify(rec, say("plan.skipped", task=task, base=rec["base"]))
+            raise Stop(f"`{plan}` has blocking open questions:\n" + "\n".join(f"- {q}" for q in blocks))
+        notify(rec, say("plan.skipped", plan=plan, base=rec["base"]))
         start_build(rec)
     else:
+        rec["plan_feature"] = plan_folder(rec, taken)
         start_plan(rec)
     return True
 
@@ -1719,8 +1778,10 @@ def fill_slots(state):
                     rec["queue_noticed"] = True
                     notify(rec, say("queued", position=position, max=CONFIG["max_active"]))
             continue
+        taken = {r.get("plan_feature") for r in state["issues"].values()
+                 if r is not rec and r["stage"] not in ("merged", "dropped")}
         try:
-            begin(rec)
+            begin(rec, taken=taken)
         except Stop as stop:
             stop_for_human(rec, str(stop))
         except Exception:
