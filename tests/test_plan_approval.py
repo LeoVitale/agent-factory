@@ -96,6 +96,25 @@ class PlanApprovalTest(PlanApprovalCase):
             self.f.handle_approval(self.rec)
         self.assertEqual(sh("git", "rev-list", "--count", "HEAD", cwd=self.worktree), "2")
 
+    def test_approval_that_fails_to_commit_is_kept_for_the_next_tick(self):
+        self.finish_plan()
+        hook = self.worktree / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        approval = {"source": "Slack", "text": "aprovo"}
+        self.rec["inbox"] = [approval]
+        with self.assertRaises(RuntimeError):
+            self.f.handle_approval(self.rec)
+        self.assertEqual((self.rec["stage"], self.rec["inbox"], self.builds), ("approval", [approval], []))
+        self.assertEqual((self.worktree / PLAN).read_text(), TEMPLATE)
+        self.assertEqual(sh("git", "status", "--porcelain", cwd=self.worktree), "")
+
+        hook.unlink()
+        self.f.handle_approval(self.rec)
+        self.assertEqual(self.builds, ["ENG-1"])
+        self.assertEqual(sh("git", "log", "-1", "--format=%s", cwd=self.worktree),
+                         "docs(plan): record the approval of ENG-1")
+
     def test_other_reply_goes_back_to_plan(self):
         self.finish_plan()
         self.rec["inbox"] = [{"source": "Slack", "text": "ok, mas deixe o filtro de data de fora"}]
@@ -152,6 +171,23 @@ class OpenQuestionsTest(unittest.TestCase):
         blocks, _ = self.questions("**Open questions:**\n\n- Open the sheet first, or the list?\n")
         self.assertEqual(blocks, ["Open the sheet first, or the list?"])
 
+    def test_loose_list_reads_past_blank_lines(self):
+        blocks, _ = self.questions("**Open questions:**\n\n"
+                                   "- `open` - should the filter remember its value?\n\n"
+                                   "- `blocks` - which statuses count as overdue?\n")
+        self.assertEqual(blocks, ["`blocks` - which statuses count as overdue?"])
+
+    def test_nested_items_detail_the_question_above(self):
+        blocks, go_live = self.questions("**Open questions:**\n\n"
+                                         "- `open` - should the filter remember its value?\n"
+                                         "  - context: the old list did not\n"
+                                         "- `blocks go-live` - who signs off the copy?\n")
+        self.assertEqual((blocks, go_live), ([], ["`blocks go-live` - who signs off the copy?"]))
+
+    def test_list_after_the_inline_answer_and_a_blank_line_is_not_read(self):
+        self.assertEqual(self.questions("**Open questions:** none - all resolved.\n\n- a list of something else\n"),
+                         ([], []))
+
     def test_plan_without_the_line(self):
         self.assertEqual(self.questions(""), ([], []))
 
@@ -174,6 +210,17 @@ class PlanFolderTest(unittest.TestCase):
 
     def test_folder_another_open_issue_plans_in(self):
         self.assertEqual(self.f.plan_folder(self.rec, {"visual-refresh", None}), "visual-refresh-eng-7")
+
+    def test_taken_counts_records_saved_before_plan_feature(self):
+        state = {"issues": {
+            "ENG-7": self.rec,
+            "OLD-1": {"stage": "build", "feature": "visual-refresh", "conversations": [{"station": "plan"}]},
+            "NEW-2": {"stage": "approval", "feature": "other", "plan_feature": "other-new-2"},
+            "QUE-3": {"stage": "queued", "feature": "queued-only"},
+            "MRG-4": {"stage": "merged", "feature": "gone", "plan_feature": "gone"}}}
+        taken = self.f.taken_plan_folders(state, self.rec)
+        self.assertEqual(taken - {None}, {"visual-refresh", "other-new-2"})
+        self.assertEqual(self.f.plan_folder(self.rec, taken), "visual-refresh-eng-7")
 
     def test_issue_folder_reads_the_feature_discovery(self):
         self.rec.update(plan_feature="visual-refresh-eng-7", issue_url="u", worktree="/w", branch="b")

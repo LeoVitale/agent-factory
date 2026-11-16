@@ -613,8 +613,10 @@ def canvas_up(state):
         error = None
     except HTTPStatusError as e:
         error = str(e) if e.status in CANVAS_DOWN_STATUSES else None
-    except OSError as e:
-        error = str(e) or type(e).__name__
+    except Exception as e:
+        # A refused connection, a response cut off as the server dies, a body that is not JSON: none of them may
+        # leave the tick, which runs outside any try.
+        error = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
     down = state.get("canvas_down")
     if error and not down:
         log.error("the Canvas is down: %s", error)
@@ -651,20 +653,26 @@ def event_count(conv_id):
 def start_station(rec, station, prompt, title=None, detail=None, retry=False):
     """`title` and `detail` replace the station's usual Slack line, for a fix round or a handoff. A `retry` runs the
     same station again in a new conversation and keeps its original prompt and retry count."""
-    rec["stage"] = station
+    before, rec["stage"] = rec.get("stage"), station
     first = not rec.get("conversations")
     if not mutate(f"start {station} conversation for {rec['identifier']}"):
         return
     profile = CONFIG.get("station_profiles", {}).get(station, CONFIG["agent_profile_id"])
-    out = canvas("POST", "/api/conversations", {
-        "agent_profile_id": profile,
-        "workspace": {"kind": "LocalWorkspace", "working_dir": rec["worktree"]},
-        "worktree": False,
-        "autotitle": False,
-        "tags": {"factory": rec["identifier"].lower(), "station": station},
-        "secrets": profile_secrets(profile),
-        "initial_message": {"role": "user", "content": [{"type": "text", "text": prompt}], "run": True},
-    })
+    try:
+        out = canvas("POST", "/api/conversations", {
+            "agent_profile_id": profile,
+            "workspace": {"kind": "LocalWorkspace", "working_dir": rec["worktree"]},
+            "worktree": False,
+            "autotitle": False,
+            "tags": {"factory": rec["identifier"].lower(), "station": station},
+            "secrets": profile_secrets(profile),
+            "initial_message": {"role": "user", "content": [{"type": "text", "text": prompt}], "run": True},
+        })
+    except Exception:
+        # No conversation started: at the new stage, the last conversation's result would be read as this
+        # station's, so the issue stays at the stage it was in.
+        rec["stage"] = before
+        raise
     rec["conversation_id"] = out["id"]
     rec["events_mark"] = 0
     if not retry:
@@ -837,13 +845,23 @@ def open_questions(path):
         return [], []
     inline = OPEN_QUESTIONS.sub("", lines[at]).strip()
     questions = [inline] if inline else []
+    indent, gap = None, False  # the indent of the list's items; a blank line since the last one
     for line in lines[at + 1:]:
-        if QUESTION_ITEM.match(line):
+        if not line.strip():
+            gap = True
+            continue
+        depth = len(line) - len(line.lstrip())
+        if QUESTION_ITEM.match(line) and (indent is None or depth <= indent):
+            if gap and indent is None and questions:
+                break  # a list after the inline answer and a blank line belongs to something else
+            indent = depth if indent is None else indent
             questions.append(QUESTION_ITEM.sub("", line).strip())
-        elif questions and line.startswith((" ", "\t")) and line.strip():
+        elif questions and depth > (indent or 0):
+            # A wrapped line, or a nested item that details the question above it.
             questions[-1] += " " + line.strip()
-        elif line.strip() or questions:
+        else:
             break
+        gap = False
     questions = [q for q in questions if not re.match(r"[*_`]*none\b", q, re.I)]
     return ([q for q in questions if question_kind(q) == "blocks"],
             [q for q in questions if question_kind(q) == "blocks go-live"])
@@ -1289,14 +1307,22 @@ def handle_approval(rec):
     if not replies:
         return
     if all(is_approval(r["text"]) for r in replies):
+        try:
+            record_approval(rec, replies[-1]["text"])
+        except Exception:
+            # The approval is not in the plan yet: keep it for the next tick instead of losing it.
+            rec["inbox"] = replies
+            raise
         rec.pop("waiting_since", None)
-        record_approval(rec, replies[-1]["text"])
+        # The approval is committed in the plan, so from here the issue waits for a slot, not for the person. A Build
+        # that fails to start leaves it queued for Build, and fill_slots starts it again.
+        rec.update(stage="queued", held_for="build")
         if not has_slot(rec, "plan.approved_queued"):
-            # The approval is committed in the plan, so the issue waits for a slot, not for the person.
-            rec.update(stage="queued", held_for="build")
             return
         notify(rec, say("plan.approved"))
-        return start_build(rec)
+        start_build(rec)
+        rec.pop("held_for", None)
+        return
     if not has_slot(rec):
         rec["inbox"] = replies
         return
@@ -1330,8 +1356,14 @@ def record_approval(rec, text):
     if text == before or not mutate(f"record the approval in {plan}"):
         return
     path.write_text(text)
-    git("add", plan, cwd=rec["worktree"])
-    git("commit", "-qm", f"docs(plan): record the approval of {rec['identifier']}", cwd=rec["worktree"])
+    try:
+        git("add", plan, cwd=rec["worktree"])
+        git("commit", "-qm", f"docs(plan): record the approval of {rec['identifier']}", cwd=rec["worktree"])
+    except Exception:
+        # Leave the plan as it was, so the next try writes and commits the line again instead of finding it there.
+        run(["git", "reset", "-q", "--", plan], cwd=rec["worktree"], check=False)
+        path.write_text(before)
+        raise
 
 
 def after_build(rec, result):
@@ -1845,6 +1877,13 @@ def has_slot(rec, notice="held"):
     return False
 
 
+def taken_plan_folders(state, rec):
+    """The plan folders of the issues other than `rec` that are not merged yet. A record saved before `plan_feature`
+    existed that already ran a station planned in its own feature's folder."""
+    return {r.get("plan_feature") or (r.get("feature") if r.get("conversations") else None)
+            for r in state["issues"].values() if r is not rec and r["stage"] not in ("merged", "dropped")}
+
+
 def fill_slots(state):
     """Start held issues oldest first while slots are free; tell a queued issue its position once. An issue queued
     with `held_for` already ran its first station and starts that one instead."""
@@ -1860,14 +1899,12 @@ def fill_slots(state):
                     notify(rec, say("queued", position=position, max=CONFIG["max_active"]))
             continue
         rec.pop("queue_noticed", None)
-        taken = {r.get("plan_feature") for r in state["issues"].values()
-                 if r is not rec and r["stage"] not in ("merged", "dropped")}
         try:
             if rec.get("held_for") == "build":
                 start_build(rec)
                 rec.pop("held_for")
             else:
-                begin(rec, taken=taken)
+                begin(rec, taken=taken_plan_folders(state, rec))
         except Stop as stop:
             stop_for_human(rec, str(stop))
         except Exception:

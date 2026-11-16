@@ -86,6 +86,23 @@ class ApprovalTest(SlotCase):
         self.assertNotIn("held_for", rec)
         self.assertEqual(len(self.notes_for("ENG-1")), 1)
 
+    def test_build_that_fails_to_start_after_approval_stays_queued_for_build(self):
+        self.free_slot()
+        rec = self.add(stage="approval", worktree=str(self.worktree), conversations=[{"station": "plan"}],
+                       inbox=[{"source": "Slack", "text": "aprovo"}])
+
+        def fail(rec, handoff=False):
+            raise RuntimeError("POST /api/conversations -> 502")
+        self.f.start_build = fail
+        with self.assertRaises(RuntimeError):
+            self.f.handle_approval(rec)
+        self.assertEqual((rec["stage"], rec["held_for"]), ("queued", "build"))
+
+        self.f.start_build = lambda rec, handoff=False: self.builds.append(rec["identifier"])
+        self.f.fill_slots(self.state)
+        self.assertEqual((self.builds, self.begun), (["ENG-1"], []))
+        self.assertNotIn("held_for", rec)
+
     def test_approval_with_a_free_slot_starts_build(self):
         self.free_slot()
         rec = self.add(stage="approval", worktree=str(self.worktree), inbox=[{"source": "Slack", "text": "ok"}])
@@ -106,6 +123,23 @@ class ApprovalTest(SlotCase):
         self.f.handle_approval(rec)
         self.assertEqual(rec["stage"], "plan")
         self.assertIn("deixe o filtro de data de fora", self.sent[-1][1])
+
+
+class StartStationTest(unittest.TestCase):
+
+    def test_station_that_fails_to_start_keeps_the_stage_and_the_last_conversation(self):
+        project("start-station-")
+        f = load_engine()
+        f.profile_secrets = lambda profile: {}
+
+        def canvas(method, path, body=None):
+            raise f.HTTPStatusError(f"{method} {path} -> 502", 502)
+        f.canvas = canvas
+        rec = {"identifier": "ENG-1", "stage": "queued", "held_for": "build", "conversation_id": "plan-conv",
+               "conversations": [{"station": "plan", "id": "plan-conv"}], "worktree": "/w"}
+        with self.assertRaises(f.HTTPStatusError):
+            f.start_station(rec, "build", "prompt")
+        self.assertEqual((rec["stage"], rec["conversation_id"], len(rec["conversations"])), ("queued", "plan-conv", 1))
 
 
 class StopAnswerTest(SlotCase):

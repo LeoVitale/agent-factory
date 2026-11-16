@@ -4,6 +4,7 @@ it is back, never per issue.
 
   python3 -m unittest tests.test_canvas_outage
 """
+import http.client
 import json
 import unittest
 import urllib.error
@@ -36,6 +37,8 @@ class CanvasOutageTest(unittest.TestCase):
 
         def canvas(method, path, body=None):
             self.calls.append(path)
+            if isinstance(self.down, Exception):
+                raise self.down
             if self.down == "refused":
                 raise urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
             if self.down:
@@ -97,6 +100,19 @@ class CanvasOutageTest(unittest.TestCase):
         self.f.tick(self.state)
         self.assertEqual(self.advanced, [])
         self.assertIn("Connection refused", self.posts[0]["text"])
+
+    def test_any_other_probe_error_is_an_outage_and_stays_in_the_tick(self):
+        # A response cut off as the server dies, or a body that is not JSON, must not end the loop.
+        for error in (http.client.IncompleteRead(b"{"), json.JSONDecodeError("Expecting value", "<html>", 0)):
+            with self.subTest(error=type(error).__name__):
+                self.posts.clear()
+                self.state.pop("canvas_down", None)
+                self.down = error
+                self.f.tick(self.state)
+                self.f.quick_tick(self.state)
+                self.assertEqual(self.advanced, [])
+                self.assertEqual(len(self.posts), 1)
+                self.assertIn(type(error).__name__, self.posts[0]["text"])
 
     def test_other_error_statuses_are_not_an_outage(self):
         for status in (401, 404, 500):
