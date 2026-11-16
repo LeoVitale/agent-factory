@@ -25,7 +25,7 @@ CANVAS_PORT = 8200
 FIRST_PORT = 8202
 ENV_KEYS = ("LINEAR_API_KEY", "GH_TOKEN", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN")
 PROMPTS = ("_result.md", "answer.md", "plan.md", "build.md", "verify.md", "judge.md", "fix.md", "demo.md")
-SUPPORTED_VERSIONS = (1,)
+SUPPORTED_VERSIONS = (2,)
 IDLE_STAGES = ("review", "merged", "dropped", "waiting", "blocked", "queued", "refused")
 
 

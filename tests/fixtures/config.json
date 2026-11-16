@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "linear": {
     "team_key": "ENG",
     "states": { "ready": "Ready for agent", "progress": "In Progress", "review": "In review" },
@@ -10,8 +10,7 @@
   "base_branch": "main",
   "artifacts": {
     "feature": "\\.specs/features/([a-z0-9-]+)/",
-    "tasks": ".specs/features/{feature}/tasks/",
-    "checks": ".specs/features/{feature}/checks/",
+    "folder": ".specs/features/{feature}/",
     "discovery": ".specs/features/{feature}/discovery.md",
     "debt": { "pattern": "docs/tech-debt/(TD-[A-Z]+-\\d+)-[a-z0-9-]+\\.md", "folder": "lowercase" }
   },

@@ -12,8 +12,8 @@ SENTINEL = {
                "label": "lbl-go", "needs_human_label": "lbl-help"},
     "github_repo": "sentinel-owner/sentinel-repo",
     "base_branch": "sentinel-base",
-    "artifacts": {"feature": "docs/work/([a-z0-9-]+)/", "tasks": "docs/work/{feature}/plans/",
-                  "checks": "docs/work/{feature}/proofs/", "discovery": "docs/work/{feature}/brief.md",
+    "artifacts": {"feature": "docs/work/([a-z0-9-]+)/", "folder": "docs/work/{feature}/",
+                  "discovery": "docs/work/{feature}/brief.md",
                   "debt": {"pattern": "debt/(DBT-\\d+)-[a-z-]+\\.md", "folder": "lowercase"}},
     "schema_guard": {"paths": ["db/"], "command": "make sentinel-db-proof"},
     "ci": {"ignore": [{"context_prefix": "Sentinel", "description_contains": "quota"}]},
@@ -61,11 +61,11 @@ class ProjectConfigTest(unittest.TestCase):
         self.assertEqual(f.new_record(issue)["base"], "sentinel-base")
         # feature pattern
         self.assertEqual(f.issue_fields("see docs/work/alpha/ for it")["feature"], "alpha")
-        # tasks folder, in the Task line and in the station paths
-        self.assertEqual(f.issue_fields("Task: `docs/work/alpha/plans/01-a.md`")["task"], "docs/work/alpha/plans/01-a.md")
-        self.assertEqual(f.paths(rec)["tasks_dir"], "docs/work/alpha/plans/")
-        # checks folder
-        self.assertEqual(f.paths(rec)["checks_dir"], "docs/work/alpha/proofs/")
+        # feature folder, in the Plan line and in the station paths
+        self.assertEqual(f.issue_fields("Plan: `docs/work/alpha/plan.md`")["plan"], "docs/work/alpha/plan.md")
+        self.assertEqual(f.paths(rec)["plan"], "docs/work/alpha/plan.md")
+        self.assertEqual(f.paths(rec)["checks"], "docs/work/alpha/checks.md")
+        self.assertEqual(f.paths(rec)["verification"], "docs/work/alpha/verification.md")
         # discovery path
         self.assertEqual(f.paths(rec)["discovery"], "docs/work/alpha/brief.md")
         # tech-debt pattern and folder
@@ -77,7 +77,7 @@ class ProjectConfigTest(unittest.TestCase):
         f.gh_json = lambda *a, **k: [{"number": 3, "url": "https://pr/3"}]
         f.git = lambda *a, **k: "db/0001-init.sql"
         with self.assertRaises(f.Stop) as stop:
-            f.after_build(dict(rec), {"checklist": "docs/work/alpha/proofs/01-a.md"})
+            f.after_build(dict(rec), {})
         self.assertIn("make sentinel-db-proof", str(stop.exception))
         # CI ignore rule
         f.gh_json = lambda *a, **k: ({"workflow_runs": []} if "actions/runs" in a[1] else

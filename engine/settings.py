@@ -9,7 +9,7 @@ import os
 import subprocess
 from pathlib import Path
 
-SUPPORTED_VERSIONS = (1,)
+SUPPORTED_VERSIONS = (2,)
 
 # Timings belong to the engine; every project gets the same ones.
 ENGINE_DEFAULTS = {
@@ -66,8 +66,6 @@ def flatten(project):
         "max_base_syncs": limits["max_base_syncs"],
         "max_active": limits["max_active"],
         "demo": project.get("demo") or {"enabled": False},
-        # Build waits for the person to approve what Plan wrote; projects from before the setting run straight on.
-        "plan_approval": bool(project.get("plan_approval", False)),
     }
 
 
