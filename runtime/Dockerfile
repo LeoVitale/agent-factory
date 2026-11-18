@@ -1,6 +1,6 @@
 # Agent Canvas all-in-one image + Cursor CLI, for running Cursor (ACP) agents
 # inside a container instead of directly on the Mac.
-FROM ghcr.io/openhands/agent-canvas:1.34.0
+FROM ghcr.io/openhands/agent-canvas:1.41.0
 
 USER root
 
@@ -23,8 +23,8 @@ RUN corepack enable
 
 # RTK rewrites the agents' shell commands so their output costs fewer tokens.
 # Pinned release, checked against the SHA-256 in the release's checksums.txt.
-ARG RTK_VERSION=v1.0.1
-ARG RTK_SHA256=cd627c4091ad90b5e5aca83ca5af66ee4b8aa8537a736533fa90544f461f1c2b
+ARG RTK_VERSION=v1.2.0
+ARG RTK_SHA256=93c1dcd37fd5fcae8fa772a5b5c34a30af142ace4f4081c8f98319146b7a10a4
 RUN curl -fsSL -o /tmp/rtk.tar.gz \
       "https://github.com/rtk-ai/rtk/releases/download/${RTK_VERSION}/rtk-aarch64-unknown-linux-gnu.tar.gz" \
  && echo "${RTK_SHA256}  /tmp/rtk.tar.gz" | sha256sum -c - \
@@ -33,13 +33,15 @@ RUN curl -fsSL -o /tmp/rtk.tar.gz \
  && rtk --version
 
 # Claude Code for the Claude Code ACP profile. The ACP adapter bundles an older Claude Code that newer models
-# refuse; CLAUDE_CODE_EXECUTABLE points it at this pinned release instead.
-ARG CLAUDE_CODE_VERSION=2.1.308
-RUN /acp-node/bin/npm install -g --prefix /opt/claude-code "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+# refuse; CLAUDE_CODE_EXECUTABLE points it at this pinned release instead. npm 12 blocks install scripts by
+# default, and the postinstall is what puts the native claude binary in place.
+ARG CLAUDE_CODE_VERSION=2.1.326
+RUN /acp-node/bin/npm install -g --prefix /opt/claude-code --allow-scripts=@anthropic-ai/claude-code \
+      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && /opt/claude-code/bin/claude --version
 
 # Slack Socket Mode client for the factory orchestrator.
-RUN python3 -m pip install --no-cache-dir slack_sdk==3.35.0
+RUN python3 -m pip install --no-cache-dir slack_sdk==3.47.0
 
 COPY --chmod=755 sandbox-entrypoint.sh /opt/sandbox/sandbox-entrypoint.sh
 
